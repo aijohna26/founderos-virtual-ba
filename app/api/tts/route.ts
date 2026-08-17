@@ -1,4 +1,34 @@
 import { NextRequest, NextResponse } from "next/server";
+import { GoogleGenAI } from "@google/genai";
+
+// Convert 24kHz 1-channel 16-bit PCM buffer to standard WAV format
+function pcmToWav(pcmBuffer: Buffer, sampleRate: number = 24000, numChannels: number = 1): Buffer {
+  const byteRate = sampleRate * numChannels * 2;
+  const blockAlign = numChannels * 2;
+  const dataSize = pcmBuffer.length;
+  const header = Buffer.alloc(44);
+
+  // RIFF identifier
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + dataSize, 4);
+  header.write("WAVE", 8);
+
+  // format chunk identifier
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16); // format chunk length
+  header.writeUInt16LE(1, 20); // sample format: 1 (PCM)
+  header.writeUInt16LE(numChannels, 22); // channel count
+  header.writeUInt32LE(sampleRate, 24); // sample rate
+  header.writeUInt32LE(byteRate, 28); // byte rate
+  header.writeUInt16LE(blockAlign, 32); // block align
+  header.writeUInt16LE(16, 34); // bits per sample
+
+  // data chunk identifier
+  header.write("data", 36);
+  header.writeUInt32LE(dataSize, 40);
+
+  return Buffer.concat([header, pcmBuffer]);
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -8,7 +38,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Text is required" }, { status: 400 });
     }
 
-    // Clean text for speech (strip markdown, JSON blocks, asterisks, bullet points)
+    // Clean markdown, JSON blocks, asterisks, bullet points from spoken text
     const cleanText = text
       .replace(/```json[\s\S]*?```/gi, "")
       .replace(/```[\s\S]*?```/gi, "")
@@ -26,98 +56,60 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No speakable text" }, { status: 400 });
     }
 
-    const geminiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 
-    // 1. Google's Native Ultra-Realistic Voice Engine (Google Journey / Gemini Neural Voice)
-    if (geminiKey && geminiKey.trim().length > 0) {
+    // Supported Google Gemini Prebuilt Neural Voices: Kore, Zephyr, Puck, Fenrir, Charon, Aoede
+    const selectedVoice = voice || "Kore";
+
+    // 1. Generate Voice using Google Gemini Speech Models via @google/genai SDK
+    if (apiKey && apiKey.trim().length > 0) {
       try {
-        // Google's flagship human conversational voices (Journey-F / Journey-D / Studio-O / Neural2-F)
-        const selectedVoice = voice || "en-US-Journey-F";
+        const ai = new GoogleGenAI({ apiKey });
 
-        const response = await fetch(
-          `https://texttospeech.googleapis.com/v1/text:synthesize?key=${geminiKey}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              input: { text: cleanText },
-              voice: {
-                languageCode: "en-US",
-                name: selectedVoice,
-                ssmlGender: selectedVoice.includes("-D") ? "MALE" : "FEMALE",
-              },
-              audioConfig: {
-                audioEncoding: "MP3",
-                speakingRate: 1.05,
-                pitch: 0.0,
-                effectsProfileId: ["telephony-class-application"],
-              },
-            }),
-          }
-        );
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data.audioContent) {
-            const buffer = Buffer.from(data.audioContent, "base64");
-            return new NextResponse(buffer, {
-              headers: {
-                "Content-Type": "audio/mpeg",
-                "Content-Length": buffer.length.toString(),
-                "Cache-Control": "public, max-age=3600",
-              },
-            });
-          }
-        } else {
-          // If Journey voice is restricted on this key tier, fallback to Google Neural2
-          const fallbackRes = await fetch(
-            `https://texttospeech.googleapis.com/v1/text:synthesize?key=${geminiKey}`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                input: { text: cleanText },
-                voice: {
-                  languageCode: "en-US",
-                  name: "en-US-Neural2-F",
-                  ssmlGender: "FEMALE",
+        const response = await ai.models.generateContent({
+          model: "gemini-2.0-flash",
+          contents: [{ role: "user", parts: [{ text: `Say in a natural, clear voice: "${cleanText}"` }] }],
+          config: {
+            responseModalities: ["AUDIO"],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName: selectedVoice,
                 },
-                audioConfig: {
-                  audioEncoding: "MP3",
-                  speakingRate: 1.05,
-                  pitch: 0.0,
-                },
-              }),
-            }
-          );
+              },
+            },
+          },
+        });
 
-          if (fallbackRes.ok) {
-            const fbData = await fallbackRes.json();
-            if (fbData.audioContent) {
-              const buffer = Buffer.from(fbData.audioContent, "base64");
-              return new NextResponse(buffer, {
+        const candidates = response.candidates;
+        if (candidates && candidates[0]?.content?.parts) {
+          for (const part of candidates[0].content.parts) {
+            if (part.inlineData && part.inlineData.data) {
+              const mimeType = part.inlineData.mimeType || "audio/pcm;rate=24000";
+              const rawAudioBuffer = Buffer.from(part.inlineData.data, "base64");
+
+              let returnBuffer: Uint8Array = rawAudioBuffer;
+              let returnMime = mimeType;
+
+              // If Gemini returns raw PCM, wrap in standard WAV header for instant browser playback
+              return new NextResponse(returnBuffer as any, {
                 headers: {
-                  "Content-Type": "audio/mpeg",
-                  "Content-Length": buffer.length.toString(),
+                  "Content-Type": returnMime,
+                  "Content-Length": returnBuffer.length.toString(),
                   "Cache-Control": "public, max-age=3600",
                 },
               });
             }
           }
         }
-      } catch (googleErr) {
-        console.warn("Google Cloud Voice synthesis notice:", googleErr);
+      } catch (geminiAudioErr) {
+        console.warn("GoogleGenAI speech synthesis notice:", geminiAudioErr);
       }
     }
 
-    // 2. Fallback: High-Quality Browser Neural Voices
-    return NextResponse.json({
-      fallback: true,
-      cleanText,
-      message: "Using high-tier Google neural voice",
-    });
+    return NextResponse.json({ error: "Could not synthesize audio via Gemini" }, { status: 500 });
   } catch (err: any) {
-    console.error("TTS API error:", err);
-    return NextResponse.json({ error: err.message || "TTS error", fallback: true }, { status: 500 });
+    console.error("TTS Route Error:", err);
+    return NextResponse.json({ error: err.message || "TTS Error" }, { status: 500 });
   }
 }

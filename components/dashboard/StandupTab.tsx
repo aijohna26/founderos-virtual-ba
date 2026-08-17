@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   PhoneCall,
   Clock,
@@ -18,7 +18,10 @@ import {
 } from "lucide-react";
 import { Venture, VentureStore, KanbanCard } from "@/lib/store/ventureStore";
 import { VoiceSphereVisualizer, SARAH_PERSONAS, BusinessPersona, AgentAudioState } from "@/components/dashboard/VoiceSphereVisualizer";
-import { VoiceEngine } from "@/lib/voice/voiceEngine";
+import { VoiceEngine, VoiceState } from "@/lib/voice/voiceEngine";
+import { StandupPrepEngine } from "@/lib/agent/standupPrepEngine";
+import { BAAgentService } from "@/lib/agent/baAgentService";
+import { MemoryService } from "@/lib/db/memoryService";
 
 export interface StandupTabProps {
   venture: Venture;
@@ -36,8 +39,11 @@ export function StandupTab({
   setActiveTab,
 }: StandupTabProps) {
   const [selectedPersona, setSelectedPersona] = useState<BusinessPersona>(SARAH_PERSONAS[0]);
+  const [audioState, setAudioState] = useState<AgentAudioState>("idle");
   const [isMuted, setIsMuted] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingTranscriptRef = useRef<string>("");
 
   const getColItems = (col: any): KanbanCard[] => {
     if (!col) return [];
@@ -51,31 +57,161 @@ export function StandupTab({
   const todayCards = getColItems(venture?.columns?.today);
   const blockedCards = getColItems(venture?.columns?.blocked);
   const backlogCards = getColItems(venture?.columns?.backlog);
-
   const totalActive = inProgressCards.length + todayCards.length;
+
+  // Initialize Speech Recognition for Live Standup
+  useEffect(() => {
+    VoiceEngine.preloadVoices();
+    VoiceEngine.initRecognition(
+      (transcript, isFinal) => {
+        if (!transcript.trim()) return;
+
+        setInterimTranscript(transcript);
+        pendingTranscriptRef.current = transcript.trim();
+
+        if (silenceTimerRef.current) {
+          clearTimeout(silenceTimerRef.current);
+        }
+
+        const delay = isFinal ? 600 : 1300;
+        silenceTimerRef.current = setTimeout(() => {
+          if (pendingTranscriptRef.current.trim().length > 0) {
+            const textToSubmit = pendingTranscriptRef.current.trim();
+            pendingTranscriptRef.current = "";
+            setInterimTranscript("");
+
+            // Filter echo loops
+            const lower = textToSubmit.toLowerCase();
+            if (lower === "got it" || lower === "got it." || lower === "i" || lower === "the") {
+              return;
+            }
+
+            handleUserSpokenInput(textToSubmit);
+          }
+        }, delay);
+      },
+      (state) => {
+        setAudioState(state);
+      },
+      (err) => {
+        console.warn("Standup voice engine notice:", err);
+      },
+      () => {
+        // Interrupted callback
+        setAudioState("listening");
+      }
+    );
+
+    return () => {
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    };
+  }, [venture]);
+
+  // Submit spoken text to Gemini BA Reasoning Engine
+  const handleUserSpokenInput = async (spokenText: string) => {
+    setAudioState("thinking");
+
+    try {
+      const activeMemories = MemoryService.getMemories(venture.id);
+
+      const res = await fetch("/api/ai-analyst", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: spokenText,
+          venture: {
+            id: venture.id,
+            name: venture.name,
+            tagline: venture.tagline,
+            stage: venture.stage,
+            targetCustomer: venture.targetCustomer,
+            problemStatement: venture.problemStatement,
+            assumptions: venture.assumptions,
+            columns: venture.columns,
+            priorities: venture.priorities,
+          },
+          memories: activeMemories,
+          history: (venture.chatHistory || []).slice(-6),
+        }),
+      });
+
+      const data = await res.json();
+      const aiReply = data.reply || `I'm tracking your sprint progress. Let's focus on our primary goal.`;
+
+      // Execute any autonomous tools via BAAgentService
+      let currentVenture: Venture = { ...venture };
+      if (Array.isArray(data.actions) && data.actions.length > 0) {
+        for (const action of data.actions) {
+          const toolRes = BAAgentService.executeTool(action.type, action, currentVenture, "daily_standup");
+          if (toolRes.updatedVenture) {
+            currentVenture = toolRes.updatedVenture;
+          }
+        }
+      }
+
+      onUpdateVenture(currentVenture);
+      VentureStore.updateVenture(currentVenture);
+
+      // Speak response aloud with Google's Kore Neural Voice
+      VoiceEngine.speak(
+        aiReply,
+        selectedPersona.voiceName.includes("Kore") ? "Kore" : "Aoede",
+        () => setAudioState("speaking"),
+        () => {
+          if (isDailyCallActive) {
+            setAudioState("listening");
+            VoiceEngine.startListening();
+          } else {
+            setAudioState("idle");
+          }
+        }
+      );
+    } catch (err) {
+      console.error("Standup voice processing error:", err);
+      setAudioState(isDailyCallActive ? "listening" : "idle");
+    }
+  };
 
   const handleStartCall = () => {
     const nextCall = !isDailyCallActive;
     setIsDailyCallActive(nextCall);
+
     if (nextCall) {
       VoiceEngine.unlockAudio();
+      const agenda = StandupPrepEngine.prepareAgenda(venture);
+      setAudioState("speaking");
+
       VoiceEngine.speak(
-        `Good day Founder! I'm Sarah Jenkins, your Lead Business Analyst for ${venture.name}. Let's conduct our daily standup. What did you finish yesterday and what's your top focus today?`
+        agenda.greeting,
+        "Kore",
+        () => setAudioState("speaking"),
+        () => {
+          setAudioState("listening");
+          VoiceEngine.startListening();
+        }
       );
     } else {
       VoiceEngine.stopSpeaking();
       VoiceEngine.stopListening();
+      setAudioState("idle");
+      setInterimTranscript("");
     }
   };
 
   const handleInterrupt = () => {
     VoiceEngine.stopSpeaking();
+    setAudioState("listening");
+    VoiceEngine.startListening();
   };
 
   const handleTestVoice = () => {
     VoiceEngine.unlockAudio();
+    setAudioState("speaking");
     VoiceEngine.speak(
-      `Hello! I'm Sarah, your Lead AI Business Analyst. I'm connected and ready for our daily sprint standup.`
+      `Hello! I'm Sarah Jenkins, your Lead AI Business Analyst. I'm connected with Google's neural voice engine and ready for our daily standup.`,
+      "Kore",
+      () => setAudioState("speaking"),
+      () => setAudioState("idle")
     );
   };
 
@@ -88,12 +224,6 @@ export function StandupTab({
       VoiceEngine.startListening();
     }
   };
-
-  const audioState: AgentAudioState = isDailyCallActive
-    ? VoiceEngine.isCurrentlySpeaking()
-      ? "speaking"
-      : "listening"
-    : "idle";
 
   return (
     <div className="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-200">
@@ -108,6 +238,7 @@ export function StandupTab({
         onInterrupt={handleInterrupt}
         onStartCall={handleStartCall}
         onTestVoice={handleTestVoice}
+        audioAnalyser={VoiceEngine.getAudioAnalyser()}
         interimTranscript={interimTranscript}
       />
 
@@ -242,10 +373,10 @@ export function StandupTab({
         </div>
       </div>
 
-      {/* 3. Sarah's Stand-up Intelligence & Commitment Logger */}
+      {/* 3. Sarah's Stand-up Intelligence & Guidelines */}
       <div className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-xs space-y-4">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center font-bold">
+          <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
             <Sparkles className="w-4 h-4" />
           </div>
           <div>

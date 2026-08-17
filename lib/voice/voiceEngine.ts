@@ -1,6 +1,6 @@
 "use client";
 
-export type VoiceState = "idle" | "listening" | "processing" | "speaking";
+export type VoiceState = "idle" | "listening" | "thinking" | "speaking" | "paused";
 
 export class VoiceEngine {
   private static recognition: any = null;
@@ -17,6 +17,9 @@ export class VoiceEngine {
   private static keepAliveTimer: any = null;
   private static stateChangeCallback: ((state: VoiceState) => void) | null = null;
   private static onInterruptCallback: (() => void) | null = null;
+  private static audioContext: AudioContext | null = null;
+  private static analyserNode: AnalyserNode | null = null;
+  private static audioSourceNode: MediaElementAudioSourceNode | null = null;
 
   // Clean markdown, code blocks, bullet points and JSON from text for clear, natural speech
   static cleanTextForSpeech(text: string): string {
@@ -58,13 +61,26 @@ export class VoiceEngine {
   static unlockAudio(): void {
     if (typeof window === "undefined") return;
     try {
+      if (!this.audioContext) {
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        this.audioContext = new AudioCtx();
+        this.analyserNode = this.audioContext.createAnalyser();
+        this.analyserNode.fftSize = 64;
+      }
+      if (this.audioContext.state === "suspended") {
+        this.audioContext.resume();
+      }
       if ("speechSynthesis" in window) {
         window.speechSynthesis.resume();
       }
     } catch (e) {}
   }
 
-  // Initialize Speech Recognition with Strict Speaker Echo Rejection
+  static getAudioAnalyser(): AnalyserNode | null {
+    return this.analyserNode;
+  }
+
+  // Initialize Speech Recognition with Echo Rejection & Real-Time Interim Transcripts
   static initRecognition(
     onTranscript: (text: string, isFinal: boolean) => void,
     onStateChange: (state: VoiceState) => void,
@@ -74,6 +90,7 @@ export class VoiceEngine {
     if (typeof window === "undefined") return false;
 
     this.preloadVoices();
+    this.unlockAudio();
     this.stateChangeCallback = onStateChange;
     this.onInterruptCallback = onInterrupt || null;
 
@@ -100,8 +117,7 @@ export class VoiceEngine {
         };
 
         this.recognition.onresult = (event: any) => {
-          // 🛑 1. ZERO-TOLERANCE ECHO SUPPRESSION:
-          // If Sarah is currently speaking OR stopped speaking less than 450ms ago, drop all input
+          // Drop mic input during AI speech or right after speech to prevent acoustic loops
           const now = Date.now();
           if (VoiceEngine.isSpeaking || (now - VoiceEngine.lastSpokenEndTime < 450)) {
             return;
@@ -121,14 +137,13 @@ export class VoiceEngine {
           const rawHeard = (finalTranscript || interimTranscript).trim().toLowerCase();
           if (!rawHeard || rawHeard.length < 2) return;
 
-          // 🛑 2. PHRASE BLEED FILTER: Check if user input is an echo fragment from recently spoken text
+          // Phrase bleed filter
           const isRecentEcho = VoiceEngine.recentlySpokenSentences.some((recent) => {
             const cleanRecent = recent.toLowerCase();
             return cleanRecent.includes(rawHeard) || rawHeard === "got it" || rawHeard === "got it.";
           });
 
           if (isRecentEcho && rawHeard.split(" ").length < 4) {
-            console.log("Filtered speaker echo bleed:", rawHeard);
             return;
           }
 
@@ -148,7 +163,7 @@ export class VoiceEngine {
 
         this.recognition.onend = () => {
           this.isListening = false;
-          // Restart only if we should be listening and AI is NOT speaking
+          // Continuous listening loop
           if (this.shouldBeListening && !this.isSpeaking) {
             setTimeout(() => {
               if (this.shouldBeListening && !this.isSpeaking && !this.isListening) {
@@ -205,12 +220,33 @@ export class VoiceEngine {
     }
   }
 
-  // Text-to-Speech with Speaker Mute & Echo Rejection
+  // Set state directly (e.g. "thinking")
+  static setState(state: VoiceState): void {
+    if (this.stateChangeCallback) {
+      this.stateChangeCallback(state);
+    }
+  }
+
+  // High-Definition Neural Voice Playback (Gemini Voice: Kore / Aoede)
   static async speak(
     text: string,
-    onStart?: () => void,
-    onEnd?: () => void
+    voiceOrOnStart?: string | (() => void),
+    onStartOrOnEnd?: () => void,
+    onEndCallback?: () => void
   ): Promise<void> {
+    let voiceName = "Kore";
+    let onStart: (() => void) | undefined = undefined;
+    let onEnd: (() => void) | undefined = undefined;
+
+    if (typeof voiceOrOnStart === "string") {
+      voiceName = voiceOrOnStart;
+      onStart = onStartOrOnEnd;
+      onEnd = onEndCallback;
+    } else if (typeof voiceOrOnStart === "function") {
+      onStart = voiceOrOnStart;
+      onEnd = onStartOrOnEnd;
+    }
+
     if (typeof window === "undefined") {
       if (onEnd) onEnd();
       return;
@@ -222,7 +258,6 @@ export class VoiceEngine {
       return;
     }
 
-    // Stop previous audio & pause recognition during playback
     this.stopSpeaking();
     this.isSpeaking = true;
     this.recentlySpokenSentences.push(cleanText);
@@ -230,7 +265,6 @@ export class VoiceEngine {
       this.recentlySpokenSentences.shift();
     }
 
-    // Temporarily pause mic to guarantee zero speaker feedback
     if (this.recognition) {
       try {
         this.recognition.stop();
@@ -238,12 +272,12 @@ export class VoiceEngine {
       this.isListening = false;
     }
 
-    // 1. Attempt High-Definition Server-Side Audio Stream (Google Cloud Journey / Gemini Voice)
+    // 1. Server-Side Google Gemini Neural Voice Stream (Kore / Zephyr / Aoede)
     try {
       const res = await fetch("/api/tts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: cleanText }),
+        body: JSON.stringify({ text: cleanText, voice: voiceName }),
       });
 
       const contentType = res.headers.get("content-type") || "";
@@ -254,7 +288,27 @@ export class VoiceEngine {
         this.currentAudioUrl = audioUrl;
 
         const audio = new Audio(audioUrl);
+        audio.crossOrigin = "anonymous";
         this.currentAudio = audio;
+
+        // Connect to Web Audio AnalyserNode for real-time waveform visualizer
+        try {
+          if (!this.audioContext) {
+            const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+            this.audioContext = new AudioCtx();
+            this.analyserNode = this.audioContext.createAnalyser();
+            this.analyserNode.fftSize = 64;
+          }
+          if (this.audioContext.state === "suspended") {
+            await this.audioContext.resume();
+          }
+
+          const source = this.audioContext.createMediaElementSource(audio);
+          source.connect(this.analyserNode!);
+          this.analyserNode!.connect(this.audioContext.destination);
+        } catch (ctxErr) {
+          console.warn("Audio analyser connect notice:", ctxErr);
+        }
 
         audio.onplay = () => {
           VoiceEngine.isSpeaking = true;
@@ -273,7 +327,6 @@ export class VoiceEngine {
           }
           VoiceEngine.currentAudio = null;
 
-          // Resume listening 400ms after audio playback ends (allowing room echo to clear)
           if (VoiceEngine.shouldBeListening) {
             setTimeout(() => {
               if (VoiceEngine.shouldBeListening && !VoiceEngine.isSpeaking) {
@@ -288,10 +341,7 @@ export class VoiceEngine {
         };
 
         audio.onended = handleAudioEnd;
-        audio.onerror = (e) => {
-          console.warn("Audio playback notice:", e);
-          handleAudioEnd();
-        };
+        audio.onerror = () => handleAudioEnd();
 
         await audio.play();
         return;
@@ -300,11 +350,10 @@ export class VoiceEngine {
       console.warn("HD Audio streaming notice:", err);
     }
 
-    // 2. Fallback: High-Quality Browser Neural Synthesis
+    // 2. Fallback to Browser Neural Synthesis
     this.speakWithBrowserNeural(cleanText, onStart, onEnd);
   }
 
-  // Enhanced Human Neural Voice Fallback
   private static speakWithBrowserNeural(
     cleanText: string,
     onStart?: () => void,
@@ -328,7 +377,6 @@ export class VoiceEngine {
       utterance.pitch = 1.0;
       utterance.volume = 1.0;
 
-      // Select top human neural conversational voices
       const voices = window.speechSynthesis.getVoices();
       if (voices && voices.length > 0) {
         const preferredVoice =
@@ -354,7 +402,6 @@ export class VoiceEngine {
           VoiceEngine.keepAliveTimer = null;
         }
 
-        // Resume mic 400ms after speech ends
         if (VoiceEngine.shouldBeListening) {
           setTimeout(() => {
             if (VoiceEngine.shouldBeListening && !VoiceEngine.isSpeaking) {
@@ -374,26 +421,10 @@ export class VoiceEngine {
           VoiceEngine.stateChangeCallback("speaking");
         }
         if (onStart) onStart();
-
-        // Watchdog
-        if (VoiceEngine.keepAliveTimer) clearInterval(VoiceEngine.keepAliveTimer);
-        VoiceEngine.keepAliveTimer = setInterval(() => {
-          if (typeof window !== "undefined" && "speechSynthesis" in window) {
-            if (window.speechSynthesis.speaking) {
-              window.speechSynthesis.pause();
-              window.speechSynthesis.resume();
-            } else {
-              handleSpeechComplete();
-            }
-          }
-        }, 8000);
       };
 
       utterance.onend = handleSpeechComplete;
-      utterance.onerror = (e) => {
-        console.warn("Speech synthesis notice:", e);
-        handleSpeechComplete();
-      };
+      utterance.onerror = () => handleSpeechComplete();
 
       setTimeout(() => {
         try {
@@ -402,12 +433,10 @@ export class VoiceEngine {
           }
           window.speechSynthesis.speak(utterance);
         } catch (err) {
-          console.error("TTS speak error:", err);
           handleSpeechComplete();
         }
       }, 50);
     } catch (err) {
-      console.error("Failed to execute TTS speak:", err);
       this.isSpeaking = false;
       this.lastSpokenEndTime = Date.now();
       if (onEnd) onEnd();
@@ -449,7 +478,6 @@ export class VoiceEngine {
       this.activeUtterances.clear();
     }
 
-    // Re-enable mic on interrupt
     if (this.shouldBeListening) {
       setTimeout(() => {
         this.startListening();
