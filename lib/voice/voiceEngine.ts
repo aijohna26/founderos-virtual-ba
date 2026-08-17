@@ -6,6 +6,25 @@ export class VoiceEngine {
   private static recognition: any = null;
   private static isListening: boolean = false;
   private static isSpeaking: boolean = false;
+  private static currentUtterance: SpeechSynthesisUtterance | null = null;
+  private static voicesLoaded: boolean = false;
+
+  // Pre-load voices on client
+  static preloadVoices(): void {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+
+    const loadVoices = () => {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        VoiceEngine.voicesLoaded = true;
+      }
+    };
+
+    loadVoices();
+    if (window.speechSynthesis.onvoiceschanged !== undefined) {
+      window.speechSynthesis.onvoiceschanged = loadVoices;
+    }
+  }
 
   // Initialize Speech Recognition (Speech-to-Text)
   static initRecognition(
@@ -14,6 +33,9 @@ export class VoiceEngine {
     onError: (err: string) => void
   ): boolean {
     if (typeof window === "undefined") return false;
+
+    // Also preload TTS voices
+    this.preloadVoices();
 
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -89,15 +111,18 @@ export class VoiceEngine {
 
   // Stop listening
   static stopListening(): void {
-    if (this.recognition && this.isListening) {
+    if (this.recognition) {
+      try {
+        this.recognition.abort();
+      } catch (e) {}
       try {
         this.recognition.stop();
-        this.isListening = false;
-      } catch (e) {
-        console.warn("Recognition stop error:", e);
-      }
+      } catch (e) {}
+      this.isListening = false;
     }
   }
+
+  private static activeUtterances: Set<SpeechSynthesisUtterance> = new Set();
 
   // Text-to-Speech (AI Voice)
   static speak(
@@ -106,71 +131,105 @@ export class VoiceEngine {
     onEnd?: () => void
   ): void {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      console.warn("speechSynthesis not supported on this browser.");
+      if (onEnd) onEnd();
       return;
     }
 
-    // Cancel any active speech
-    window.speechSynthesis.cancel();
+    try {
+      // Cancel previous speech to prevent overlapping queues
+      window.speechSynthesis.cancel();
 
-    // Clean markdown formatting for clean, natural speech audio
-    const cleanText = text
-      .replace(/(\*\*|__)(.*?)\1/g, "$2") // bold
-      .replace(/(\*|_)(.*?)\1/g, "$2") // italic
-      .replace(/#+\s/g, "") // headers
-      .replace(/`{1,3}.*?`{1,3}/g, "") // code
-      .replace(/•\s/g, "") // bullet dots
-      .replace(/\[(.*?)\]\(.*?\)/g, "$1") // markdown links
-      .replace(/[-*]\s/g, "")
-      .replace(/\n+/g, " ")
-      .trim();
+      // Clean markdown formatting & actions JSON for natural, smooth voice
+      const cleanText = text
+        .replace(/```json[\s\S]*?```/g, "")
+        .replace(/```[\s\S]*?```/g, "")
+        .replace(/(\*\*|__)(.*?)\1/g, "$2") // bold
+        .replace(/(\*|_)(.*?)\1/g, "$2") // italic
+        .replace(/#+\s/g, "") // headers
+        .replace(/`{1,3}.*?`{1,3}/g, "") // code
+        .replace(/•\s/g, "") // bullet dots
+        .replace(/\[(.*?)\]\(.*?\)/g, "$1") // markdown links
+        .replace(/[-*]\s/g, "")
+        .replace(/\n+/g, " ")
+        .trim();
 
-    if (!cleanText) return;
+      if (!cleanText) {
+        if (onEnd) onEnd();
+        return;
+      }
 
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.rate = 1.05; // Slightly brisk professional pace
-    utterance.pitch = 1.0;
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      this.currentUtterance = utterance;
+      this.activeUtterances.add(utterance);
 
-    // Pick a natural sounding English voice
-    const voices = window.speechSynthesis.getVoices();
-    const preferredVoice = voices.find(
-      (v) =>
-        v.lang.startsWith("en") &&
-        (v.name.includes("Samantha") ||
-          v.name.includes("Victoria") ||
-          v.name.includes("Google US English") ||
-          v.name.includes("Karen") ||
-          v.name.includes("Natural") ||
-          v.name.includes("Female"))
-    ) || voices.find((v) => v.lang.startsWith("en"));
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+      utterance.volume = 1.0;
 
-    if (preferredVoice) {
-      utterance.voice = preferredVoice;
+      // Select natural English voice
+      const voices = window.speechSynthesis.getVoices();
+      if (voices && voices.length > 0) {
+        const preferredVoice =
+          voices.find(
+            (v) =>
+              v.lang.startsWith("en") &&
+              (v.name.includes("Samantha") ||
+                v.name.includes("Victoria") ||
+                v.name.includes("Google US English") ||
+                v.name.includes("Karen") ||
+                v.name.includes("Natural") ||
+                v.name.includes("Jenny") ||
+                v.name.includes("Aria"))
+          ) ||
+          voices.find((v) => v.lang.startsWith("en")) ||
+          voices[0];
+
+        if (preferredVoice) {
+          utterance.voice = preferredVoice;
+        }
+      }
+
+      utterance.onstart = () => {
+        VoiceEngine.isSpeaking = true;
+        if (onStart) onStart();
+      };
+
+      utterance.onend = () => {
+        VoiceEngine.isSpeaking = false;
+        VoiceEngine.activeUtterances.delete(utterance);
+        VoiceEngine.currentUtterance = null;
+        if (onEnd) onEnd();
+      };
+
+      utterance.onerror = (e) => {
+        console.warn("Speech synthesis notice:", e);
+        VoiceEngine.isSpeaking = false;
+        VoiceEngine.activeUtterances.delete(utterance);
+        VoiceEngine.currentUtterance = null;
+        if (onEnd) onEnd();
+      };
+
+      // In Chrome/Safari, ensure speech synthesis engine is resumed
+      if (window.speechSynthesis.paused) {
+        window.speechSynthesis.resume();
+      }
+
+      window.speechSynthesis.speak(utterance);
+    } catch (err) {
+      console.error("Failed to execute TTS speak:", err);
+      if (onEnd) onEnd();
     }
-
-    utterance.onstart = () => {
-      this.isSpeaking = true;
-      if (onStart) onStart();
-    };
-
-    utterance.onend = () => {
-      this.isSpeaking = false;
-      if (onEnd) onEnd();
-    };
-
-    utterance.onerror = (e) => {
-      console.warn("Speech synthesis notice:", e);
-      this.isSpeaking = false;
-      if (onEnd) onEnd();
-    };
-
-    window.speechSynthesis.speak(utterance);
   }
 
   // Stop speaking immediately
   static stopSpeaking(): void {
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.cancel();
+      try {
+        window.speechSynthesis.cancel();
+      } catch (e) {}
       this.isSpeaking = false;
+      this.currentUtterance = null;
     }
   }
 

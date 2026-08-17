@@ -9,18 +9,26 @@ import { OverviewTab } from "@/components/dashboard/OverviewTab";
 import { BoardTab } from "@/components/dashboard/BoardTab";
 import { StrategyTab } from "@/components/dashboard/StrategyTab";
 import { AssumptionsTab } from "@/components/dashboard/AssumptionsTab";
+import { RequirementsTab } from "@/components/dashboard/RequirementsTab";
+import { ExperimentsTab } from "@/components/dashboard/ExperimentsTab";
+import { MetricsTab } from "@/components/dashboard/MetricsTab";
+import { RoadmapTab } from "@/components/dashboard/RoadmapTab";
 import { DocumentsTab } from "@/components/dashboard/DocumentsTab";
 import { AiAnalystPanel } from "@/components/dashboard/AiAnalystPanel";
 import { CreateVentureModal } from "@/components/dashboard/CreateVentureModal";
 import { DailyCallAlertModal } from "@/components/dashboard/DailyCallAlertModal";
+import { SettingsModal } from "@/components/dashboard/SettingsModal";
+import { HelpSupportModal } from "@/components/dashboard/HelpSupportModal";
 import { VentureStore, Venture } from "@/lib/store/ventureStore";
 
 export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState<string>("Overview");
   const [ventures, setVentures] = useState<Venture[]>([]);
   const [activeVentureId, setActiveVentureId] = useState<string>("founderally");
-  const [isDailyCallActive, setIsDailyCallActive] = useState<boolean>(true);
+  const [isDailyCallActive, setIsDailyCallActive] = useState<boolean>(false);
   const [createModalOpen, setCreateModalOpen] = useState<boolean>(false);
+  const [settingsModalOpen, setSettingsModalOpen] = useState<boolean>(false);
+  const [helpModalOpen, setHelpModalOpen] = useState<boolean>(false);
   const [mounted, setMounted] = useState<boolean>(false);
 
   useEffect(() => {
@@ -71,6 +79,8 @@ export default function DashboardPage() {
         onOpenCreateVenture={() => setCreateModalOpen(true)}
         isDailyCallActive={isDailyCallActive}
         setIsDailyCallActive={setIsDailyCallActive}
+        onOpenSettings={() => setSettingsModalOpen(true)}
+        onOpenHelp={() => setHelpModalOpen(true)}
       />
 
       {/* 2. Main Content Area */}
@@ -85,6 +95,7 @@ export default function DashboardPage() {
           onOpenCreateVenture={() => setCreateModalOpen(true)}
           isDailyCallActive={isDailyCallActive}
           setIsDailyCallActive={setIsDailyCallActive}
+          onUpdateVenture={handleUpdateVenture}
         />
 
         {/* Dynamic Main Workspace Canvas */}
@@ -109,27 +120,15 @@ export default function DashboardPage() {
               onUpdateVenture={handleUpdateVenture}
             />
           )}
-          {activeTab === "Requirements" && <StrategyTab venture={activeVenture} />}
+          {activeTab === "Requirements" && <RequirementsTab venture={activeVenture} />}
           {activeTab === "Experiments" && (
-            <AssumptionsTab
+            <ExperimentsTab
               venture={activeVenture}
               onUpdateVenture={handleUpdateVenture}
             />
           )}
-          {activeTab === "Roadmap" && (
-            <OverviewTab
-              venture={activeVenture}
-              onUpdateVenture={handleUpdateVenture}
-              setActiveTab={setActiveTab}
-            />
-          )}
-          {activeTab === "Metrics" && (
-            <OverviewTab
-              venture={activeVenture}
-              onUpdateVenture={handleUpdateVenture}
-              setActiveTab={setActiveTab}
-            />
-          )}
+          {activeTab === "Roadmap" && <RoadmapTab venture={activeVenture} />}
+          {activeTab === "Metrics" && <MetricsTab venture={activeVenture} />}
           {activeTab === "Documents" && <DocumentsTab venture={activeVenture} />}
         </main>
       </div>
@@ -152,8 +151,25 @@ export default function DashboardPage() {
       {/* 5. Daily Call 15 / 10 / 5 min Alarm Alert Modal */}
       <DailyCallAlertModal
         isDailyCallActive={isDailyCallActive}
-        onJoinCall={() => setIsDailyCallActive(true)}
+        onJoinCall={() => {
+          setIsDailyCallActive(true);
+          setActiveTab("Board");
+        }}
         ventureName={activeVenture.name}
+      />
+
+      {/* 6. Settings Modal */}
+      <SettingsModal
+        isOpen={settingsModalOpen}
+        onClose={() => setSettingsModalOpen(false)}
+        venture={activeVenture}
+        onUpdateVenture={handleUpdateVenture}
+      />
+
+      {/* 7. Help & Support Modal */}
+      <HelpSupportModal
+        isOpen={helpModalOpen}
+        onClose={() => setHelpModalOpen(false)}
       />
     </div>
   );

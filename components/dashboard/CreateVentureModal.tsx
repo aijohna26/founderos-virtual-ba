@@ -21,6 +21,7 @@ export function CreateVentureModal({
   const [problemStatement, setProblemStatement] = useState("");
   const [solutionSummary, setSolutionSummary] = useState("");
   const [stage, setStage] = useState("Ideation & Problem Discovery");
+  const [boardMode, setBoardMode] = useState<"clean" | "ai_starter">("clean");
   const [loading, setLoading] = useState(false);
 
   if (!isOpen) return null;
@@ -32,20 +33,23 @@ export function CreateVentureModal({
     setLoading(true);
 
     try {
-      const res = await fetch("/api/generate-venture-analysis", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim(),
-          tagline: tagline.trim() || `${name} — AI Driven Solution`,
-          targetCustomer: targetCustomer.trim() || "Target early adopters",
-          problemStatement: problemStatement.trim(),
-          solutionSummary: solutionSummary.trim() || tagline.trim(),
-          stage,
-        }),
-      });
+      let analysis: any = {};
+      if (boardMode === "ai_starter") {
+        const res = await fetch("/api/generate-venture-analysis", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: name.trim(),
+            tagline: tagline.trim() || `${name} — AI Driven Solution`,
+            targetCustomer: targetCustomer.trim() || "Target early adopters",
+            problemStatement: problemStatement.trim(),
+            solutionSummary: solutionSummary.trim() || tagline.trim(),
+            stage,
+          }),
+        });
+        analysis = await res.json();
+      }
 
-      const analysis = await res.json();
       const id = name.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-" + Date.now().toString().slice(-4);
 
       const newVenture: Venture = {
@@ -68,21 +72,30 @@ export function CreateVentureModal({
           moat: "Proprietary domain workflows.",
           alternatives: "Manual spreadsheets & legacy tools."
         },
-        columns: analysis.columns || {
+        columns: boardMode === "ai_starter" && analysis.columns ? analysis.columns : {
           backlog: { name: "BACKLOG", items: [] },
           today: { name: "TODAY", items: [] },
           in_progress: { name: "IN PROGRESS", items: [] },
           done: { name: "DONE", items: [] },
           blocked: { name: "BLOCKED", items: [] },
         },
-        assumptions: analysis.assumptions || [],
-        priorities: analysis.priorities || [],
-        milestones: analysis.milestones || [],
+        assumptions: boardMode === "ai_starter" && analysis.assumptions ? analysis.assumptions : [
+          {
+            id: "a-init-1",
+            statement: `Customers will adopt ${name} to solve: ${problemStatement.slice(0, 120)}`,
+            category: "Problem",
+            importance: "High",
+            status: "Untested",
+            evidence: "Pending discovery interviews",
+          }
+        ],
+        priorities: boardMode === "ai_starter" && analysis.priorities ? analysis.priorities : [],
+        milestones: boardMode === "ai_starter" && analysis.milestones ? analysis.milestones : [],
         chatHistory: [
           {
             id: "ch-init",
             sender: "ai",
-            text: analysis.initialAiMessage || `Welcome to ${name}! I've completed an initial business discovery analysis. What should we stress-test first?`,
+            text: `Welcome to ${name}! I'm your AI Business Analyst. We've started with a clean, focused board. What hypothesis or customer problem should we prioritize first?`,
             timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
           },
         ],
@@ -205,9 +218,53 @@ export function CreateVentureModal({
               value={problemStatement}
               onChange={(e) => setProblemStatement(e.target.value)}
               placeholder="Describe the primary friction, pain, or inefficiency your customers face today..."
-              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 h-24"
+              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 h-20"
               required
             />
+          </div>
+
+          {/* Initial Board Setup Mode */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
+              Board Starting State
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setBoardMode("clean")}
+                className={`p-3 rounded-2xl border text-left transition-all ${
+                  boardMode === "clean"
+                    ? "border-blue-600 bg-blue-50/70 ring-2 ring-blue-500/20"
+                    : "border-slate-200 bg-slate-50/50 hover:bg-slate-100/60"
+                }`}
+              >
+                <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-blue-600" />
+                  <span>Clean Slate (Empty Board)</span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1 leading-snug">
+                  Start fresh with 0 cards. Build tickets with Gemini as you converse.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setBoardMode("ai_starter")}
+                className={`p-3 rounded-2xl border text-left transition-all ${
+                  boardMode === "ai_starter"
+                    ? "border-blue-600 bg-blue-50/70 ring-2 ring-blue-500/20"
+                    : "border-slate-200 bg-slate-50/50 hover:bg-slate-100/60"
+                }`}
+              >
+                <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                  <Sparkles className="w-3 h-3 text-purple-600" />
+                  <span>AI Starter Suggestions</span>
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1 leading-snug">
+                  Auto-generate initial sprint hypotheses & cards.
+                </p>
+              </button>
+            </div>
           </div>
 
           <div className="pt-2 flex items-center justify-end gap-3 border-t border-slate-100">

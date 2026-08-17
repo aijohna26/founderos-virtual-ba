@@ -192,35 +192,6 @@ export function DailyCallAlertModal({
           </div>
         </div>
       )}
-
-      {/* Quick Alarm Test Trigger (Wrapped neatly inside sidebar width) */}
-      <div className="fixed bottom-3 left-3 z-40 hidden md:flex flex-col gap-1 bg-white/95 backdrop-blur-xs px-2.5 py-1.5 rounded-xl border border-slate-200/90 shadow-xs text-slate-600 text-[10px] font-medium max-w-[170px] select-none">
-        <div className="flex items-center gap-1 font-bold text-slate-800">
-          <Bell className="w-3 h-3 text-blue-600 shrink-0" />
-          <span className="truncate">Alarm: 09:00 AM</span>
-        </div>
-        <div className="flex items-center gap-1 text-[10px]">
-          <span className="text-slate-400 font-medium">Test:</span>
-          <button
-            onClick={() => triggerTestAlert(15)}
-            className="px-1.5 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold transition-colors"
-          >
-            15m
-          </button>
-          <button
-            onClick={() => triggerTestAlert(10)}
-            className="px-1.5 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold transition-colors"
-          >
-            10m
-          </button>
-          <button
-            onClick={() => triggerTestAlert(5)}
-            className="px-1.5 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold transition-colors"
-          >
-            5m
-          </button>
-        </div>
-      </div>
     </>
   );
 }

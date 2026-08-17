@@ -112,26 +112,40 @@ CRITICAL RULES:
 }`;
 
     if (apiKey && apiKey.trim().length > 0) {
-      const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+      // Google's newest, ultra-fast, lowest-cost production models ($0.075 - $0.10 / 1M tokens)
+      const modelCandidates = [
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-8b"
+      ];
 
-      const res = await fetch(geminiEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.4,
-            responseMimeType: "application/json",
-          },
-        }),
-      });
+      for (const model of modelCandidates) {
+        try {
+          const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-      if (res.ok) {
-        const data = await res.json();
-        const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (jsonText) {
-          const parsed = JSON.parse(jsonText);
-          return NextResponse.json(parsed);
+          const res = await fetch(geminiEndpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [{ role: "user", parts: [{ text: prompt }] }],
+              generationConfig: {
+                temperature: 0.4,
+                responseMimeType: "application/json",
+              },
+            }),
+          });
+
+          if (res.ok) {
+            const data = await res.json();
+            const jsonText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (jsonText) {
+              const parsed = JSON.parse(jsonText);
+              return NextResponse.json(parsed);
+            }
+          }
+        } catch (err) {
+          console.warn(`Error generating venture analysis with ${model}:`, err);
         }
       }
     }

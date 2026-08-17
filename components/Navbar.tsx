@@ -1,54 +1,256 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { ChevronDown, Sparkles, Menu, X } from "lucide-react";
+import {
+  ChevronDown,
+  Sparkles,
+  Menu,
+  X,
+  PhoneCall,
+  LayoutGrid,
+  TrendingUp,
+  ShieldCheck,
+  Rocket,
+  Users,
+  FileSpreadsheet,
+  Cpu,
+  BookOpen
+} from "lucide-react";
 import { Show, UserButton, SignInButton, SignUpButton } from "@clerk/nextjs";
 
 export function Navbar() {
   const [mounted, setMounted] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setMounted(true);
+
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setActiveDropdown(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  const toggleDropdown = (name: string) => {
+    setActiveDropdown((prev) => (prev === name ? null : name));
+  };
+
   return (
-    <header className="sticky top-0 z-50 bg-white/90 backdrop-blur-md border-b border-slate-200/80">
+    <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-slate-200/80">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
         {/* Brand Logo */}
         <Link href="/" className="flex items-center gap-2.5 group">
-          <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center text-white font-bold text-xl shadow-md shadow-blue-500/20 group-hover:scale-105 transition-transform">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 2L4 6V18L12 22L20 18V6L12 2Z" fill="currentColor" opacity="0.2"/>
-              <path d="M6 8L12 5L18 8V16L12 19L6 16V8Z" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M12 12V19" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
-              <path d="M12 12L18 8.5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
-            </svg>
-          </div>
-          <span className="text-2xl font-bold tracking-tight text-slate-900">
-            Founder<span className="text-blue-600">Ally</span>
-          </span>
+          <img
+            src="/founderally-logo.png"
+            alt="FounderAlly Logo"
+            className="h-9 sm:h-10 w-auto object-contain group-hover:scale-105 transition-transform"
+          />
         </Link>
 
-        {/* Center Navigation Links */}
-        <nav className="hidden md:flex items-center space-x-8 text-sm font-medium text-slate-600">
-          <div className="relative group flex items-center gap-1 cursor-pointer hover:text-blue-600 transition-colors py-2">
-            <span>Product</span>
-            <ChevronDown className="w-4 h-4 text-slate-400 group-hover:text-blue-600 transition-transform group-hover:rotate-180" />
+        {/* Center Navigation Links with Dropdowns */}
+        <nav ref={dropdownRef} className="hidden md:flex items-center space-x-6 text-sm font-semibold text-slate-700">
+          {/* 1. Product Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => toggleDropdown("product")}
+              onMouseEnter={() => setActiveDropdown("product")}
+              className="flex items-center gap-1.5 py-2 px-3 rounded-xl hover:text-blue-600 hover:bg-slate-50 transition-all cursor-pointer"
+            >
+              <span>Product</span>
+              <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${activeDropdown === "product" ? "rotate-180 text-blue-600" : ""}`} />
+            </button>
+
+            {activeDropdown === "product" && (
+              <div
+                onMouseLeave={() => setActiveDropdown(null)}
+                className="absolute top-full left-0 w-80 bg-white rounded-2xl shadow-xl border border-slate-200/90 p-3 grid gap-1.5 animate-in fade-in slide-in-from-top-2 duration-150 z-50"
+              >
+                <Link
+                  href="/#voice-standup"
+                  onClick={() => setActiveDropdown(null)}
+                  className="p-3 rounded-xl hover:bg-blue-50/70 transition-colors flex items-start gap-3 group"
+                >
+                  <div className="p-2 rounded-lg bg-blue-100/70 text-blue-700 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                    <PhoneCall className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 group-hover:text-blue-600">Daily Voice Standup</div>
+                    <div className="text-[11px] text-slate-500 font-normal">2-way live voice calls with Gemini AI</div>
+                  </div>
+                </Link>
+
+                <Link
+                  href="/#kanban-board"
+                  onClick={() => setActiveDropdown(null)}
+                  className="p-3 rounded-xl hover:bg-blue-50/70 transition-colors flex items-start gap-3 group"
+                >
+                  <div className="p-2 rounded-lg bg-purple-100/70 text-purple-700 group-hover:bg-purple-600 group-hover:text-white transition-colors">
+                    <LayoutGrid className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 group-hover:text-purple-600">Autonomous Kanban Board</div>
+                    <div className="text-[11px] text-slate-500 font-normal">AI ticket creation & acceptance criteria</div>
+                  </div>
+                </Link>
+
+                <Link
+                  href="/#market-sizing"
+                  onClick={() => setActiveDropdown(null)}
+                  className="p-3 rounded-xl hover:bg-blue-50/70 transition-colors flex items-start gap-3 group"
+                >
+                  <div className="p-2 rounded-lg bg-emerald-100/70 text-emerald-700 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                    <TrendingUp className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 group-hover:text-emerald-600">TAM / SAM / SOM Sizing</div>
+                    <div className="text-[11px] text-slate-500 font-normal">Automated market & ICP strategy modeling</div>
+                  </div>
+                </Link>
+
+                <Link
+                  href="/#assumptions"
+                  onClick={() => setActiveDropdown(null)}
+                  className="p-3 rounded-xl hover:bg-blue-50/70 transition-colors flex items-start gap-3 group"
+                >
+                  <div className="p-2 rounded-lg bg-rose-100/70 text-rose-700 group-hover:bg-rose-600 group-hover:text-white transition-colors">
+                    <ShieldCheck className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 group-hover:text-rose-600">Hypothesis Risk Register</div>
+                    <div className="text-[11px] text-slate-500 font-normal">Stress-test & validate core assumptions</div>
+                  </div>
+                </Link>
+              </div>
+            )}
           </div>
-          <div className="relative group flex items-center gap-1 cursor-pointer hover:text-blue-600 transition-colors py-2">
-            <span>Use Cases</span>
-            <ChevronDown className="w-4 h-4 text-slate-400 group-hover:text-blue-600 transition-transform group-hover:rotate-180" />
+
+          {/* 2. Use Cases Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => toggleDropdown("usecases")}
+              onMouseEnter={() => setActiveDropdown("usecases")}
+              className="flex items-center gap-1.5 py-2 px-3 rounded-xl hover:text-blue-600 hover:bg-slate-50 transition-all cursor-pointer"
+            >
+              <span>Use Cases</span>
+              <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${activeDropdown === "usecases" ? "rotate-180 text-blue-600" : ""}`} />
+            </button>
+
+            {activeDropdown === "usecases" && (
+              <div
+                onMouseLeave={() => setActiveDropdown(null)}
+                className="absolute top-full left-0 w-80 bg-white rounded-2xl shadow-xl border border-slate-200/90 p-3 grid gap-1.5 animate-in fade-in slide-in-from-top-2 duration-150 z-50"
+              >
+                <Link
+                  href="/#use-cases"
+                  onClick={() => setActiveDropdown(null)}
+                  className="p-3 rounded-xl hover:bg-blue-50/70 transition-colors flex items-start gap-3 group"
+                >
+                  <div className="p-2 rounded-lg bg-indigo-100/70 text-indigo-700 group-hover:bg-indigo-600 group-hover:text-white transition-colors">
+                    <Rocket className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 group-hover:text-indigo-600">Pre-Seed & Idea Validation</div>
+                    <div className="text-[11px] text-slate-500 font-normal">Validate ideas before writing code</div>
+                  </div>
+                </Link>
+
+                <Link
+                  href="/#use-cases"
+                  onClick={() => setActiveDropdown(null)}
+                  className="p-3 rounded-xl hover:bg-blue-50/70 transition-colors flex items-start gap-3 group"
+                >
+                  <div className="p-2 rounded-lg bg-amber-100/70 text-amber-700 group-hover:bg-amber-600 group-hover:text-white transition-colors">
+                    <Users className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 group-hover:text-amber-600">Customer Discovery Calls</div>
+                    <div className="text-[11px] text-slate-500 font-normal">Turn user interviews into concrete PRDs</div>
+                  </div>
+                </Link>
+
+                <Link
+                  href="/#use-cases"
+                  onClick={() => setActiveDropdown(null)}
+                  className="p-3 rounded-xl hover:bg-blue-50/70 transition-colors flex items-start gap-3 group"
+                >
+                  <div className="p-2 rounded-lg bg-blue-100/70 text-blue-700 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                    <FileSpreadsheet className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 group-hover:text-blue-600">Executive PRD & Investor Prep</div>
+                    <div className="text-[11px] text-slate-500 font-normal">Export complete venture roadmaps & decks</div>
+                  </div>
+                </Link>
+              </div>
+            )}
           </div>
-          <Link href="#pricing" className="hover:text-blue-600 transition-colors">
+
+          {/* 3. Direct Pricing Link */}
+          <Link
+            href="/pricing"
+            className="py-2 px-3 rounded-xl hover:text-blue-600 hover:bg-slate-50 transition-all"
+          >
             Pricing
           </Link>
-          <div className="relative group flex items-center gap-1 cursor-pointer hover:text-blue-600 transition-colors py-2">
-            <span>Resources</span>
-            <ChevronDown className="w-4 h-4 text-slate-400 group-hover:text-blue-600 transition-transform group-hover:rotate-180" />
+
+          {/* 4. Resources Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => toggleDropdown("resources")}
+              onMouseEnter={() => setActiveDropdown("resources")}
+              className="flex items-center gap-1.5 py-2 px-3 rounded-xl hover:text-blue-600 hover:bg-slate-50 transition-all cursor-pointer"
+            >
+              <span>Resources</span>
+              <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${activeDropdown === "resources" ? "rotate-180 text-blue-600" : ""}`} />
+            </button>
+
+            {activeDropdown === "resources" && (
+              <div
+                onMouseLeave={() => setActiveDropdown(null)}
+                className="absolute top-full left-0 w-80 bg-white rounded-2xl shadow-xl border border-slate-200/90 p-3 grid gap-1.5 animate-in fade-in slide-in-from-top-2 duration-150 z-50"
+              >
+                <Link
+                  href="/#features"
+                  onClick={() => setActiveDropdown(null)}
+                  className="p-3 rounded-xl hover:bg-blue-50/70 transition-colors flex items-start gap-3 group"
+                >
+                  <div className="p-2 rounded-lg bg-blue-100/70 text-blue-700 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                    <Cpu className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 group-hover:text-blue-600">Gemini 2.5 Flash Architecture</div>
+                    <div className="text-[11px] text-slate-500 font-normal">Real-time reasoning & voice engine</div>
+                  </div>
+                </Link>
+
+                <Link
+                  href="/pricing"
+                  onClick={() => setActiveDropdown(null)}
+                  className="p-3 rounded-xl hover:bg-blue-50/70 transition-colors flex items-start gap-3 group"
+                >
+                  <div className="p-2 rounded-lg bg-emerald-100/70 text-emerald-700 group-hover:bg-emerald-600 group-hover:text-white transition-colors">
+                    <BookOpen className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-900 group-hover:text-emerald-600">Pricing & 7-Day Trial</div>
+                    <div className="text-[11px] text-slate-500 font-normal">Compare Solo vs Pro tiers & savings</div>
+                  </div>
+                </Link>
+              </div>
+            )}
           </div>
-          <Link href="#about" className="hover:text-blue-600 transition-colors">
+
+          {/* 5. Direct About Link */}
+          <Link
+            href="/#about"
+            className="py-2 px-3 rounded-xl hover:text-blue-600 hover:bg-slate-50 transition-all"
+          >
             About
           </Link>
         </nav>
@@ -58,7 +260,7 @@ export function Navbar() {
           {!mounted ? (
             <Link
               href="/sign-up"
-              className="inline-flex items-center justify-center px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm transition-all shadow-md shadow-blue-500/20"
+              className="inline-flex items-center justify-center px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm transition-all shadow-md shadow-blue-500/20"
             >
               Sign Up
             </Link>
@@ -72,7 +274,7 @@ export function Navbar() {
                 </SignInButton>
                 <SignUpButton mode="modal" fallbackRedirectUrl="/dashboard">
                   <button className="inline-flex items-center justify-center px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm transition-all shadow-md shadow-blue-500/20 hover:shadow-lg hover:shadow-blue-500/30 cursor-pointer">
-                    Sign Up Free
+                    Start Free Trial
                   </button>
                 </SignUpButton>
               </Show>
@@ -80,10 +282,10 @@ export function Navbar() {
               <Show when="signed-in">
                 <Link
                   href="/dashboard"
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-blue-50 border border-blue-200 text-blue-700 font-semibold text-sm hover:bg-blue-100 transition-colors"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700 font-bold text-sm hover:bg-blue-100 hover:shadow-sm transition-all"
                 >
                   <Sparkles className="w-4 h-4 text-blue-600" />
-                  Go to Workspace
+                  <span>Go to Workspace</span>
                 </Link>
                 <UserButton />
               </Show>
@@ -95,7 +297,7 @@ export function Navbar() {
         <div className="md:hidden flex items-center">
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="p-2 text-slate-600 hover:text-slate-900"
+            className="p-2 text-slate-600 hover:text-slate-900 rounded-lg hover:bg-slate-100"
           >
             {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
           </button>
@@ -104,11 +306,43 @@ export function Navbar() {
 
       {/* Mobile Drawer */}
       {mobileMenuOpen && (
-        <div className="md:hidden bg-white border-b border-slate-200 px-4 pt-2 pb-6 space-y-3">
-          <Link href="#product" className="block py-2 text-slate-700 font-medium">Product</Link>
-          <Link href="#use-cases" className="block py-2 text-slate-700 font-medium">Use Cases</Link>
-          <Link href="#pricing" className="block py-2 text-slate-700 font-medium">Pricing</Link>
-          <Link href="#about" className="block py-2 text-slate-700 font-medium">About</Link>
+        <div className="md:hidden bg-white border-b border-slate-200 px-4 pt-2 pb-6 space-y-2 animate-in fade-in duration-150">
+          <Link
+            href="/#voice-standup"
+            onClick={() => setMobileMenuOpen(false)}
+            className="block py-2.5 px-3 rounded-xl text-slate-700 font-semibold hover:bg-slate-50"
+          >
+            Daily Voice Standups
+          </Link>
+          <Link
+            href="/#kanban-board"
+            onClick={() => setMobileMenuOpen(false)}
+            className="block py-2.5 px-3 rounded-xl text-slate-700 font-semibold hover:bg-slate-50"
+          >
+            Autonomous Kanban
+          </Link>
+          <Link
+            href="/#use-cases"
+            onClick={() => setMobileMenuOpen(false)}
+            className="block py-2.5 px-3 rounded-xl text-slate-700 font-semibold hover:bg-slate-50"
+          >
+            Use Cases
+          </Link>
+          <Link
+            href="/pricing"
+            onClick={() => setMobileMenuOpen(false)}
+            className="block py-2.5 px-3 rounded-xl text-slate-700 font-semibold hover:bg-slate-50"
+          >
+            Pricing (Solo & Pro)
+          </Link>
+          <Link
+            href="/#about"
+            onClick={() => setMobileMenuOpen(false)}
+            className="block py-2.5 px-3 rounded-xl text-slate-700 font-semibold hover:bg-slate-50"
+          >
+            About FounderAlly
+          </Link>
+
           <div className="pt-4 flex flex-col gap-3 border-t border-slate-100">
             <Show when="signed-out">
               <SignInButton mode="modal" fallbackRedirectUrl="/dashboard">
@@ -118,7 +352,7 @@ export function Navbar() {
               </SignInButton>
               <SignUpButton mode="modal" fallbackRedirectUrl="/dashboard">
                 <button className="w-full py-2.5 rounded-full bg-blue-600 text-white font-semibold text-center shadow-md hover:bg-blue-700 transition-colors">
-                  Sign Up Free
+                  Start 7-Day Free Trial
                 </button>
               </SignUpButton>
             </Show>
@@ -129,6 +363,7 @@ export function Navbar() {
               </div>
               <Link
                 href="/dashboard"
+                onClick={() => setMobileMenuOpen(false)}
                 className="w-full py-2.5 rounded-full bg-blue-600 text-white font-semibold text-center shadow-md flex items-center justify-center gap-2"
               >
                 <Sparkles className="w-4 h-4" /> Go to Workspace

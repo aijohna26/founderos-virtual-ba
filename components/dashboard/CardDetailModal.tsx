@@ -32,6 +32,81 @@ export interface CardDetailModalProps {
   onDeleteCard: (cardId: string, colKey: keyof Venture["columns"]) => void;
 }
 
+function parseInlineFormatting(text: string) {
+  const parts = text.split(/(\*\*.*?\*\*|\[.*?\]\(.*?\))/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <strong key={i} className="font-black text-slate-900">{part.slice(2, -2)}</strong>;
+    }
+    const linkMatch = part.match(/\[(.*?)\]\((.*?)\)/);
+    if (linkMatch) {
+      return (
+        <a
+          key={i}
+          href={linkMatch[2]}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="text-blue-600 underline font-semibold hover:text-blue-800"
+        >
+          {linkMatch[1]}
+        </a>
+      );
+    }
+    return part;
+  });
+}
+
+function renderMarkdown(content: string) {
+  if (!content) return null;
+  const cleaned = content
+    .replace(/```json[\s\S]*?```/g, "")
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/```json/g, "")
+    .replace(/```/g, "")
+    .trim();
+
+  const lines = cleaned.split("\n");
+  return (
+    <div className="space-y-2 text-xs text-slate-700 leading-relaxed">
+      {lines.map((line, idx) => {
+        const trimmed = line.trim();
+        if (!trimmed) return <div key={idx} className="h-1" />;
+
+        // Header
+        if (trimmed.startsWith("###") || trimmed.startsWith("##") || trimmed.startsWith("#")) {
+          const headerText = trimmed.replace(/^#+\s*/, "");
+          return (
+            <h4 key={idx} className="font-extrabold text-blue-900 text-xs mt-3 mb-1 flex items-center gap-1.5 border-b border-blue-100 pb-0.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-600 inline-block" />
+              <span>{headerText}</span>
+            </h4>
+          );
+        }
+
+        // Bullet point
+        if (trimmed.startsWith("•") || trimmed.startsWith("*") || trimmed.startsWith("-")) {
+          const bulletText = trimmed.replace(/^[•*\-]\s*/, "");
+          return (
+            <div key={idx} className="flex items-start gap-2 pl-1 py-0.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 shrink-0" />
+              <span className="flex-1 font-medium text-slate-800 leading-snug">
+                {parseInlineFormatting(bulletText)}
+              </span>
+            </div>
+          );
+        }
+
+        return (
+          <p key={idx} className="text-xs text-slate-700 font-medium leading-relaxed">
+            {parseInlineFormatting(trimmed)}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 export function CardDetailModal({
   card,
   columnKey,
@@ -155,7 +230,7 @@ export function CardDetailModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: `The founder spoke these instructions for the card "${title}": "${voiceTranscript}". Format a clean user story Description, extract 2-4 acceptance criteria checklist items, and recommend a category and priority for ${venture.name}. Format acceptance criteria with bullet points starting with "•".`,
+          message: `The founder spoke these instructions for the card "${title}": "${voiceTranscript}". Format a complete user story, extract 3-4 distinct testable acceptance criteria with bullet points starting with "•", and explain the context for ${venture.name}. Do not truncate or cut off.`,
           venture: {
             name: venture.name,
             problemStatement: venture.problemStatement,
@@ -165,10 +240,11 @@ export function CardDetailModal({
       });
 
       const data = await res.json();
-      const aiReply = data.reply || "";
+      const rawAiReply = data.reply || "";
+      const cleanAiReply = rawAiReply.replace(/```json[\s\S]*?```/g, "").replace(/```[\s\S]*?```/g, "").trim();
 
       // Extract bullet points as checklist items
-      const newItems = aiReply
+      const newItems = cleanAiReply
         .split("\n")
         .filter((l: string) => l.trim().startsWith("•") || l.trim().startsWith("-") || l.trim().startsWith("1.") || l.trim().startsWith("2.") || l.trim().startsWith("3."))
         .map((l: string, idx: number) => ({
@@ -179,8 +255,8 @@ export function CardDetailModal({
 
       // Set description
       const formattedDesc = description
-        ? `${description}\n\n### Spoken Voice Notes & PRD:\n${aiReply}`
-        : aiReply;
+        ? `${description}\n\n### Spoken Voice Notes & PRD:\n${cleanAiReply}`
+        : cleanAiReply;
 
       setDescription(formattedDesc);
       if (newItems.length > 0) {
@@ -215,7 +291,18 @@ export function CardDetailModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: `Write 3 crisp acceptance criteria and a user story for this task in ${venture.name}: "${title}". Format with bullet points.`,
+          message: `Generate a complete User Story and 3-4 specific, testable Acceptance Criteria for this task: "${title}" in the startup "${venture.name}".
+
+Format as:
+**User Story:**
+As a [target user role], I want to [action] so that [benefit].
+
+**Acceptance Criteria:**
+• [Criterion 1: Specific functional testable requirement]
+• [Criterion 2: Specific validation or edge condition]
+• [Criterion 3: Measurable outcome or deliverable]
+
+Please write out all criteria completely without truncation.`,
           venture: {
             name: venture.name,
             problemStatement: venture.problemStatement,
@@ -225,16 +312,17 @@ export function CardDetailModal({
       });
 
       const data = await res.json();
-      const aiReply = data.reply || "";
+      const rawAiReply = data.reply || "";
+      const cleanAiReply = rawAiReply.replace(/```json[\s\S]*?```/g, "").replace(/```[\s\S]*?```/g, "").trim();
 
       // Add to description
       const newDesc = description
-        ? `${description}\n\n### AI BA Acceptance Criteria:\n${aiReply}`
-        : `### User Story & Acceptance Criteria (Generated by AI BA):\n${aiReply}`;
+        ? `${description}\n\n### User Story & Acceptance Criteria:\n${cleanAiReply}`
+        : `### User Story & Acceptance Criteria:\n${cleanAiReply}`;
       setDescription(newDesc);
 
       // Create checklist items from AI response
-      const lines = aiReply
+      const lines = cleanAiReply
         .split("\n")
         .filter((l: string) => l.trim().startsWith("•") || l.trim().startsWith("-") || l.trim().startsWith("1.") || l.trim().startsWith("2.") || l.trim().startsWith("3."))
         .map((l: string, idx: number) => ({
@@ -365,23 +453,14 @@ export function CardDetailModal({
                   <AlignLeft className="w-4 h-4 text-slate-500" />
                   <span>Description & Context</span>
                 </div>
-                <div className="flex items-center gap-2">
+                {!isEditingDesc && (
                   <button
-                    onClick={startVoiceDictation}
-                    className="text-xs font-bold text-blue-600 hover:underline flex items-center gap-1"
+                    onClick={() => setIsEditingDesc(true)}
+                    className="text-xs font-bold text-blue-600 hover:underline"
                   >
-                    <Mic className="w-3 h-3 text-blue-600" />
-                    <span>Voice Dictate</span>
+                    Edit
                   </button>
-                  {!isEditingDesc && (
-                    <button
-                      onClick={() => setIsEditingDesc(true)}
-                      className="text-xs font-bold text-slate-600 hover:underline ml-2"
-                    >
-                      Edit
-                    </button>
-                  )}
-                </div>
+                )}
               </div>
 
               {isEditingDesc ? (
@@ -390,7 +469,7 @@ export function CardDetailModal({
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
                     placeholder="Add detailed task scope, requirements, or links..."
-                    className="w-full p-3.5 rounded-2xl border border-slate-300 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 h-32 leading-relaxed"
+                    className="w-full p-3.5 rounded-2xl border border-slate-300 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 h-40 leading-relaxed font-mono"
                   />
                   <div className="flex gap-2">
                     <button
@@ -398,7 +477,7 @@ export function CardDetailModal({
                         setIsEditingDesc(false);
                         handleSaveAll();
                       }}
-                      className="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs"
+                      className="px-4 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xs"
                     >
                       Save
                     </button>
@@ -413,9 +492,15 @@ export function CardDetailModal({
               ) : (
                 <div
                   onClick={() => setIsEditingDesc(true)}
-                  className="p-3.5 rounded-2xl bg-slate-50/80 border border-slate-200/80 text-xs text-slate-700 leading-relaxed cursor-pointer hover:bg-slate-100/70 transition-colors min-h-[64px] whitespace-pre-wrap"
+                  className="p-4 rounded-2xl bg-slate-50/80 border border-slate-200/80 cursor-pointer hover:bg-slate-100/70 transition-colors min-h-[72px]"
                 >
-                  {description || "Click to add a detailed description, or click 'Talk to Fill Card' to speak..."}
+                  {description ? (
+                    renderMarkdown(description)
+                  ) : (
+                    <span className="text-xs text-slate-400 italic">
+                      Click to add a detailed description, user story, or technical notes...
+                    </span>
+                  )}
                 </div>
               )}
             </div>

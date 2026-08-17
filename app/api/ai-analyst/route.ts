@@ -88,10 +88,8 @@ Voice Optimization Rules:
 2. Proactively confirm any board action you take (e.g. "I've added the ticket to Today's list and marked it High priority.").
 3. In morning standups, review blocked and in-progress tickets by name.`;
 
-    // 1. Call Gemini API if available
+    // 1. Call Gemini API with model fallback
     if (apiKey && apiKey.trim().length > 0) {
-      const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
-
       const contents = [
         {
           role: "user",
@@ -99,43 +97,61 @@ Voice Optimization Rules:
         },
       ];
 
-      const res = await fetch(geminiEndpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents,
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 800,
-          },
-        }),
-      });
+      // Google's newest, ultra-fast, lowest-cost production models ($0.075 - $0.10 / 1M tokens)
+      const modelCandidates = [
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-8b"
+      ];
 
-      if (res.ok) {
-        const data = await res.json();
-        const rawReply =
-          data.candidates?.[0]?.content?.parts?.[0]?.text ||
-          "I've analyzed your request. Let's validate the primary hypothesis.";
+      for (const model of modelCandidates) {
+        try {
+          const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 
-        // Extract JSON action block if present
-        let cleanReply = rawReply;
-        let actions: AIAction[] = [];
+          const res = await fetch(geminiEndpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents,
+              generationConfig: {
+                temperature: 0.7,
+                maxOutputTokens: 2048,
+              },
+            }),
+          });
 
-        const jsonMatch = rawReply.match(/```json\s*([\s\S]*?)\s*```/);
-        if (jsonMatch && jsonMatch[1]) {
-          try {
-            const parsed = JSON.parse(jsonMatch[1]);
-            if (Array.isArray(parsed.actions)) {
-              actions = parsed.actions;
+          if (res.ok) {
+            const data = await res.json();
+            const rawReply =
+              data.candidates?.[0]?.content?.parts?.[0]?.text;
+
+            if (rawReply) {
+              // Extract JSON action block if present
+              let cleanReply = rawReply;
+              let actions: AIAction[] = [];
+
+              const jsonMatch = rawReply.match(/```json\s*([\s\S]*?)\s*```/);
+              if (jsonMatch && jsonMatch[1]) {
+                try {
+                  const parsed = JSON.parse(jsonMatch[1]);
+                  if (Array.isArray(parsed.actions)) {
+                    actions = parsed.actions;
+                  }
+                  cleanReply = rawReply.replace(/```json[\s\S]*?```/, "").trim();
+                } catch (e) {
+                  console.error("Failed to parse AI action JSON:", e);
+                }
+              }
+
+              return NextResponse.json({ reply: cleanReply, actions });
             }
-            // Strip JSON block from spoken reply
-            cleanReply = rawReply.replace(/```json[\s\S]*?```/, "").trim();
-          } catch (e) {
-            console.error("Failed to parse AI action JSON:", e);
+          } else {
+            console.warn(`Gemini model ${model} response status:`, res.status);
           }
+        } catch (err) {
+          console.warn(`Error connecting to Gemini model ${model}:`, err);
         }
-
-        return NextResponse.json({ reply: cleanReply, actions });
       }
     }
 

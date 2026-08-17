@@ -280,13 +280,19 @@ export function OverviewTab({ venture, onUpdateVenture, setActiveTab }: Overview
                     </span>
                   </div>
 
-                  <div className="flex items-center gap-2.5 shrink-0">
+                  <div className="flex items-center gap-2 shrink-0">
                     <span
                       className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${item.tagColor}`}
                     >
                       {item.tag}
                     </span>
-                    <span className="w-6 h-6 rounded-full bg-slate-200 text-slate-700 font-bold text-[11px] flex items-center justify-center">
+                    <span
+                      className={`px-2 py-0.5 rounded-full font-black text-[9px] uppercase tracking-wider flex items-center justify-center border ${
+                        (item.owner || "YOU") === "AI"
+                          ? "bg-blue-50 text-blue-700 border-blue-200"
+                          : "bg-slate-100 text-slate-700 border-slate-200"
+                      }`}
+                    >
                       {item.owner || "YOU"}
                     </span>
                     <span className={`text-xs ${item.priorityColor || "text-rose-600 font-bold"}`}>

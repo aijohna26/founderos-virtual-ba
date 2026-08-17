@@ -9,9 +9,17 @@ import {
   ChevronDown,
   Sparkles,
   Check,
-  Plus
+  Plus,
+  Download,
+  FileSpreadsheet,
+  FileCode,
+  FileText,
+  RefreshCw,
+  Share2,
+  Trash2
 } from "lucide-react";
-import { Venture } from "@/lib/store/ventureStore";
+import { Venture, VentureStore } from "@/lib/store/ventureStore";
+import { exportBoardToCSV, exportVentureToJSON, exportVentureToMarkdown } from "@/lib/utils/exportUtils";
 
 export interface TopHeaderProps {
   activeTab: string;
@@ -22,6 +30,7 @@ export interface TopHeaderProps {
   onOpenCreateVenture: () => void;
   isDailyCallActive: boolean;
   setIsDailyCallActive: (active: boolean) => void;
+  onUpdateVenture?: (venture: Venture) => void;
 }
 
 export function TopHeader({
@@ -33,10 +42,14 @@ export function TopHeader({
   onOpenCreateVenture,
   isDailyCallActive,
   setIsDailyCallActive,
+  onUpdateVenture,
 }: TopHeaderProps) {
   const [ventureMenuOpen, setVentureMenuOpen] = useState(false);
+  const [optionsMenuOpen, setOptionsMenuOpen] = useState(false);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
   const [invited, setInvited] = useState(false);
+  const [exportSuccessMsg, setExportSuccessMsg] = useState<string | null>(null);
 
   const tabs = [
     { id: "Overview", label: "Overview" },
@@ -133,7 +146,13 @@ export function TopHeader({
         <div className="flex items-center gap-3">
           {/* Daily Call Action */}
           <button
-            onClick={() => setIsDailyCallActive(!isDailyCallActive)}
+            onClick={() => {
+              const nextState = !isDailyCallActive;
+              setIsDailyCallActive(nextState);
+              if (nextState) {
+                setActiveTab("Board");
+              }
+            }}
             className={`inline-flex items-center gap-2 px-4 py-2 rounded-full font-semibold text-xs transition-all shadow-xs ${
               isDailyCallActive
                 ? "bg-rose-600 text-white hover:bg-rose-700 shadow-rose-500/20"
@@ -159,12 +178,125 @@ export function TopHeader({
             <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-blue-600 ring-2 ring-white" />
           </button>
 
-          {/* More options */}
-          <button className="p-2 rounded-full text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors">
-            <MoreHorizontal className="w-4 h-4" />
-          </button>
+          {/* More options & Export Menu */}
+          <div className="relative">
+            <button
+              onClick={() => setOptionsMenuOpen(!optionsMenuOpen)}
+              className={`p-2 rounded-full transition-colors ${
+                optionsMenuOpen
+                  ? "bg-blue-100 text-blue-700"
+                  : "text-slate-500 hover:text-slate-800 hover:bg-slate-100"
+              }`}
+              title="Workspace & Export Options"
+            >
+              <MoreHorizontal className="w-4 h-4" />
+            </button>
+
+            {optionsMenuOpen && (
+              <div className="absolute right-0 top-full mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 p-2 z-50 animate-in fade-in zoom-in-95 duration-100 select-none">
+                <div className="px-3 py-1.5 border-b border-slate-100 flex items-center justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    Workspace & Exports
+                  </span>
+                  <Download className="w-3 h-3 text-slate-400" />
+                </div>
+
+                <div className="py-1 space-y-0.5">
+                  {/* Export Board to CSV */}
+                  <button
+                    onClick={() => {
+                      exportBoardToCSV(activeVenture);
+                      setOptionsMenuOpen(false);
+                      setExportSuccessMsg("Kanban board exported as CSV!");
+                      setTimeout(() => setExportSuccessMsg(null), 3000);
+                    }}
+                    className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-slate-700 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2.5 transition-colors"
+                  >
+                    <FileSpreadsheet className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <div>
+                      <div>Export Board (CSV)</div>
+                      <div className="text-[10px] text-slate-400 font-normal">Spreadsheet / Jira / Trello</div>
+                    </div>
+                  </button>
+
+                  {/* Export Executive Markdown Summary */}
+                  <button
+                    onClick={() => {
+                      exportVentureToMarkdown(activeVenture);
+                      setOptionsMenuOpen(false);
+                      setExportSuccessMsg("Executive PRD report exported as Markdown!");
+                      setTimeout(() => setExportSuccessMsg(null), 3000);
+                    }}
+                    className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-slate-700 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2.5 transition-colors"
+                  >
+                    <FileText className="w-4 h-4 text-blue-600 shrink-0" />
+                    <div>
+                      <div>Executive PRD (Markdown)</div>
+                      <div className="text-[10px] text-slate-400 font-normal">PRD summary for team / investors</div>
+                    </div>
+                  </button>
+
+                  {/* Export Full Venture Backup JSON */}
+                  <button
+                    onClick={() => {
+                      exportVentureToJSON(activeVenture);
+                      setOptionsMenuOpen(false);
+                      setExportSuccessMsg("Full venture backup exported as JSON!");
+                      setTimeout(() => setExportSuccessMsg(null), 3000);
+                    }}
+                    className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-slate-700 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2.5 transition-colors"
+                  >
+                    <FileCode className="w-4 h-4 text-amber-600 shrink-0" />
+                    <div>
+                      <div>Full Backup (JSON)</div>
+                      <div className="text-[10px] text-slate-400 font-normal">Complete venture database state</div>
+                    </div>
+                  </button>
+
+                  {/* Clear Board to Clean Slate */}
+                  <div className="pt-1 mt-1 border-t border-slate-100">
+                    <button
+                      onClick={() => {
+                        const cleanedVenture: Venture = {
+                          ...activeVenture,
+                          columns: {
+                            backlog: { name: "BACKLOG", items: [] },
+                            today: { name: "TODAY", items: [] },
+                            in_progress: { name: "IN PROGRESS", items: [] },
+                            done: { name: "DONE", items: [] },
+                            blocked: { name: "BLOCKED", items: [] },
+                          },
+                          priorities: [],
+                        };
+                        VentureStore.updateVenture(cleanedVenture);
+                        if (onUpdateVenture) onUpdateVenture(cleanedVenture);
+                        setOptionsMenuOpen(false);
+                        setExportSuccessMsg("Board cleared! You have a 100% clean slate.");
+                        setTimeout(() => setExportSuccessMsg(null), 3000);
+                      }}
+                      className="w-full px-3 py-2 rounded-xl text-left text-xs font-semibold text-rose-600 hover:bg-rose-50 flex items-center gap-2.5 transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4 text-rose-600 shrink-0" />
+                      <div>
+                        <div>Clear Board (Clean Slate)</div>
+                        <div className="text-[10px] text-slate-400 font-normal">Remove unwanted starter cards</div>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Export Success Toast */}
+      {exportSuccessMsg && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-4 py-2 rounded-full shadow-2xl flex items-center gap-2 text-xs font-bold animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <Check className="w-4 h-4 text-emerald-400" />
+          <span>{exportSuccessMsg}</span>
+        </div>
+      )}
 
       {/* Sub-navigation tabs */}
       <div className="flex items-center space-x-1 sm:space-x-4 overflow-x-auto border-t border-slate-100 scrollbar-none pt-1">
@@ -202,41 +334,68 @@ export function TopHeader({
             <p className="text-xs text-slate-500">
               Share this workspace with advisors, investors, or co-founders to review hypotheses & BA reports.
             </p>
-            <div className="space-y-2">
-              <label className="text-xs font-semibold text-slate-700">Email Address</label>
-              <input
-                type="email"
-                placeholder="co-founder@startup.com"
-                className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={() => setInviteModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  setInvited(true);
-                  setTimeout(() => {
-                    setInvited(false);
-                    setInviteModalOpen(false);
-                  }, 1200);
-                }}
-                className="px-5 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-md flex items-center gap-1.5"
-              >
-                {invited ? (
-                  <>
-                    <Check className="w-3.5 h-3.5" />
-                    <span>Invited!</span>
-                  </>
-                ) : (
-                  <span>Send Invite</span>
-                )}
-              </button>
-            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                const inviteUrl = typeof window !== "undefined" ? `${window.location.origin}/dashboard` : "https://getfounderally.com/dashboard";
+                if (typeof navigator !== "undefined" && navigator.clipboard) {
+                  navigator.clipboard.writeText(inviteUrl);
+                }
+
+                if (inviteEmail.trim()) {
+                  const subject = encodeURIComponent(`Join ${activeVenture.name} on FounderAlly`);
+                  const body = encodeURIComponent(
+                    `Hey,\n\nI've invited you to our startup workspace for ${activeVenture.name} on FounderAlly.\n\nJoin our AI Business Analyst workspace here: ${inviteUrl}\n\nCheers!`
+                  );
+                  window.open(`mailto:${inviteEmail.trim()}?subject=${subject}&body=${body}`, "_blank");
+                }
+
+                setInvited(true);
+                setExportSuccessMsg("Workspace invite link copied to clipboard & email draft opened!");
+                setTimeout(() => {
+                  setInvited(false);
+                  setInviteModalOpen(false);
+                  setInviteEmail("");
+                  setExportSuccessMsg(null);
+                }, 2000);
+              }}
+              className="space-y-4"
+            >
+              <div className="space-y-2">
+                <label className="text-xs font-semibold text-slate-700">Email Address</label>
+                <input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  placeholder="co-founder@startup.com"
+                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  required
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setInviteModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-md flex items-center gap-1.5"
+                >
+                  {invited ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-300" />
+                      <span>Invite Sent!</span>
+                    </>
+                  ) : (
+                    <span>Send Invite</span>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

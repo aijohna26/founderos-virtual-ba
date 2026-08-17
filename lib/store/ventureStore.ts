@@ -64,6 +64,18 @@ export interface VentureStrategy {
   alternatives: string;
 }
 
+export interface SprintRecord {
+  sprintNumber: number;
+  startDate: string;
+  completedDate: string;
+  totalTaken: number;
+  completed: number;
+  outstanding: number;
+  blocked: number;
+  completionRate: number;
+  completedCards?: KanbanCard[];
+}
+
 export interface Venture {
   id: string;
   name: string;
@@ -76,6 +88,9 @@ export interface Venture {
   problemStatement: string;
   solutionSummary: string;
   strategy: VentureStrategy;
+  currentSprint?: number;
+  sprintStartDate?: string;
+  sprintHistory?: SprintRecord[];
   columns: {
     backlog: { name: string; items: KanbanCard[] };
     today: { name: string; items: KanbanCard[] };

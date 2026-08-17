@@ -7,8 +7,6 @@ import {
   MicOff,
   PhoneOff,
   PhoneCall,
-  Video,
-  VideoOff,
   Settings,
   Send,
   Sparkles,
@@ -38,7 +36,6 @@ export function AiAnalystPanel({
   onUpdateVenture,
 }: AiAnalystPanelProps) {
   const [micMuted, setMicMuted] = useState(false);
-  const [videoActive, setVideoActive] = useState(false);
   const [voiceAudioEnabled, setVoiceAudioEnabled] = useState(true);
   const [callDuration, setCallDuration] = useState(1477); // 24:37 in seconds
   const [inputVal, setInputVal] = useState("");
@@ -48,6 +45,7 @@ export function AiAnalystPanel({
   const [showMemoryModal, setShowMemoryModal] = useState(false);
   const [memories, setMemories] = useState<MemoryFact[]>([]);
   const chatBottomRef = useRef<HTMLDivElement>(null);
+  const latestMsgRef = useRef<HTMLDivElement>(null);
 
   const messages = venture?.chatHistory || [
     {
@@ -66,8 +64,18 @@ export function AiAnalystPanel({
     }
   }, [venture?.id]);
 
+  // Auto-scroll to the top of the latest message
+  useEffect(() => {
+    if (isTyping) {
+      chatBottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    } else if (latestMsgRef.current) {
+      latestMsgRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [messages, isTyping]);
+
   // Initialize Speech Recognition & Voice Engine
   useEffect(() => {
+    VoiceEngine.preloadVoices();
     VoiceEngine.initRecognition(
       (transcript, isFinal) => {
         if (isFinal && transcript.trim().length > 0) {
@@ -89,6 +97,11 @@ export function AiAnalystPanel({
       VoiceEngine.stopSpeaking();
     };
   }, [venture]);
+
+  // Auto-scroll to latest message
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isTyping]);
 
   // Manage mic listening during Daily Call
   useEffect(() => {
@@ -310,8 +323,11 @@ export function AiAnalystPanel({
     setMicMuted(nextMuted);
     if (nextMuted) {
       VoiceEngine.stopListening();
+      setVoiceState("idle");
     } else {
-      VoiceEngine.startListening();
+      if (isDailyCallActive) {
+        VoiceEngine.startListening();
+      }
     }
   };
 
@@ -322,6 +338,17 @@ export function AiAnalystPanel({
       VoiceEngine.stopSpeaking();
       VoiceEngine.stopListening();
       setIsSpeakingAI(false);
+      setVoiceState("idle");
+    } else {
+      // Starting call: speak latest AI message or greeting immediately!
+      const lastAiMsg = [...messages].reverse().find((m) => m.sender === "ai");
+      if (lastAiMsg && voiceAudioEnabled) {
+        VoiceEngine.speak(
+          lastAiMsg.text,
+          () => setIsSpeakingAI(true),
+          () => setIsSpeakingAI(false)
+        );
+      }
     }
   };
 
@@ -507,10 +534,10 @@ export function AiAnalystPanel({
         {/* Call Status & Timer */}
         <div className="text-center mt-1 mb-2">
           <p className="text-[11px] font-bold text-slate-800">
-            {isDailyCallActive
-              ? isSpeakingAI
-                ? "AI BA speaking..."
-                : voiceState === "listening"
+            {isSpeakingAI
+              ? "🔊 AI BA Speaking..."
+              : isDailyCallActive
+              ? voiceState === "listening"
                 ? "Listening to mic..."
                 : "Daily Call Active"
               : "Daily Call Standby"}
@@ -520,12 +547,12 @@ export function AiAnalystPanel({
           </p>
         </div>
 
-        {/* Audio / Video / Call Control Buttons */}
-        <div className="flex items-center gap-2">
+        {/* Audio / Voice Call Control Buttons */}
+        <div className="flex items-center justify-center gap-3">
           {/* Mute toggle */}
           <button
             onClick={toggleMic}
-            className={`p-2 rounded-full transition-all ${
+            className={`p-2.5 rounded-full transition-all cursor-pointer ${
               micMuted
                 ? "bg-rose-100 text-rose-600 hover:bg-rose-200"
                 : voiceState === "listening"
@@ -534,36 +561,46 @@ export function AiAnalystPanel({
             }`}
             title={micMuted ? "Unmute Microphone" : "Mute Microphone"}
           >
-            {micMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+            {micMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
           </button>
 
           {/* End Call / Start Call Button */}
           <button
             onClick={toggleCall}
-            className={`p-2.5 rounded-full text-white shadow-md transition-all ${
+            className={`p-3 rounded-full text-white shadow-md transition-all cursor-pointer ${
               isDailyCallActive
-                ? "bg-rose-600 hover:bg-rose-700 shadow-rose-500/30"
-                : "bg-blue-600 hover:bg-blue-700 shadow-blue-500/30"
+                ? "bg-rose-600 hover:bg-rose-700 shadow-rose-500/30 ring-2 ring-rose-300"
+                : "bg-blue-600 hover:bg-blue-700 shadow-blue-500/30 hover:scale-105"
             }`}
-            title={isDailyCallActive ? "End Daily Call" : "Start Daily Call"}
+            title={isDailyCallActive ? "End Daily Call" : "Start Daily Call & Speak"}
           >
             {isDailyCallActive ? (
-              <PhoneOff className="w-3.5 h-3.5" />
+              <PhoneOff className="w-4 h-4" />
             ) : (
-              <PhoneCall className="w-3.5 h-3.5" />
+              <PhoneCall className="w-4 h-4" />
             )}
           </button>
 
-          {/* Video toggle */}
+          {/* Direct Speak / Play Voice button */}
           <button
-            onClick={() => setVideoActive(!videoActive)}
-            className={`p-2 rounded-full transition-all ${
-              videoActive
-                ? "bg-blue-100 text-blue-700 hover:bg-blue-200"
+            onClick={() => {
+              const lastAiMsg = [...messages].reverse().find((m) => m.sender === "ai");
+              if (lastAiMsg) {
+                VoiceEngine.speak(
+                  lastAiMsg.text,
+                  () => setIsSpeakingAI(true),
+                  () => setIsSpeakingAI(false)
+                );
+              }
+            }}
+            className={`p-2.5 rounded-full transition-all cursor-pointer ${
+              isSpeakingAI
+                ? "bg-purple-600 text-white ring-2 ring-purple-300 animate-pulse"
                 : "bg-slate-100 text-slate-700 hover:bg-slate-200"
             }`}
+            title={isSpeakingAI ? "AI is speaking" : "Speak latest message aloud"}
           >
-            {videoActive ? <Video className="w-3.5 h-3.5" /> : <VideoOff className="w-3.5 h-3.5" />}
+            <Volume2 className="w-4 h-4" />
           </button>
         </div>
 
@@ -584,29 +621,50 @@ export function AiAnalystPanel({
         </div>
       </div>
 
-      {/* 3. Messages Stream & Daily Summary */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3.5 scrollbar-thin">
-        {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`flex flex-col ${
-              msg.sender === "user" ? "items-end" : "items-start"
-            }`}
-          >
-            <span className="text-[10px] font-bold text-slate-400 mb-1 px-1">
-              {msg.sender === "ai" ? "AI BA" : "You"}
-            </span>
+      {/* 3. Messages Stream */}
+      <div className="flex-1 overflow-y-auto p-3.5 space-y-3 scrollbar-thin flex flex-col">
+        {messages.map((msg, index) => {
+          const isLatest = index === messages.length - 1;
+          return (
             <div
-              className={`max-w-[88%] rounded-2xl px-3.5 py-2.5 text-xs font-medium leading-relaxed shadow-2xs whitespace-pre-wrap ${
-                msg.sender === "user"
-                  ? "bg-blue-600 text-white rounded-br-xs"
-                  : "bg-slate-100 text-slate-900 rounded-bl-xs border border-slate-200/60"
+              key={msg.id}
+              ref={isLatest ? latestMsgRef : null}
+              className={`flex flex-col ${
+                msg.sender === "user" ? "items-end" : "items-start"
               }`}
             >
-              {msg.text}
+              <div className="flex items-center gap-1.5 mb-0.5 px-1">
+                <span className="text-[9px] font-bold text-slate-400">
+                  {msg.sender === "ai" ? "AI BA" : "You"}
+                </span>
+                {msg.sender === "ai" && (
+                  <button
+                    onClick={() => {
+                      VoiceEngine.speak(
+                        msg.text,
+                        () => setIsSpeakingAI(true),
+                        () => setIsSpeakingAI(false)
+                      );
+                    }}
+                    className="text-slate-400 hover:text-blue-600 transition-colors p-0.5"
+                    title="Read aloud with AI voice"
+                  >
+                    <Volume2 className="w-3 h-3" />
+                  </button>
+                )}
+              </div>
+              <div
+                className={`max-w-[90%] rounded-2xl px-3 py-2 text-xs font-medium leading-relaxed shadow-2xs whitespace-pre-wrap ${
+                  msg.sender === "user"
+                    ? "bg-blue-600 text-white rounded-br-xs"
+                    : "bg-slate-100 text-slate-900 rounded-bl-xs border border-slate-200/60"
+                }`}
+              >
+                {msg.text}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {isTyping && (
           <div className="flex items-center gap-1.5 text-slate-400 text-xs px-2 py-1">
@@ -617,48 +675,7 @@ export function AiAnalystPanel({
           </div>
         )}
 
-        {/* Database Memory Quick Card */}
-        <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-3.5 space-y-2 mt-4">
-          <div className="flex items-center justify-between">
-            <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-              <Database className="w-3.5 h-3.5 text-blue-600" />
-              <span>Venture Memory</span>
-            </div>
-            <span className="text-[10px] text-slate-500 font-bold bg-slate-200/60 px-2 py-0.5 rounded-md">
-              {memories.length} facts stored
-            </span>
-          </div>
-          <div className="space-y-1.5 text-[11px] text-slate-600 font-medium">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-3.5 h-3.5 text-blue-600 shrink-0" />
-              <span>
-                {(() => {
-                  const doneCol = venture?.columns?.done;
-                  if (!doneCol) return 0;
-                  if (Array.isArray(doneCol)) return doneCol.length;
-                  if (Array.isArray(doneCol.items)) return doneCol.items.length;
-                  return 0;
-                })()}{" "}
-                tasks completed
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <AlertCircle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-              <span>
-                {Array.isArray(venture?.assumptions)
-                  ? venture.assumptions.filter((a) => a.status === "Untested").length
-                  : 0}{" "}
-                untested hypotheses
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-3.5 h-3.5 text-purple-600 shrink-0" />
-              <span>Stage: {venture?.stage || "Discovery & Validation"}</span>
-            </div>
-          </div>
-        </div>
-
-        <div ref={chatBottomRef} />
+        <div ref={chatBottomRef} className="h-1" />
       </div>
 
       {/* 4. Chat & Voice Input Box */}

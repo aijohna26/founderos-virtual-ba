@@ -17,7 +17,8 @@ import {
   Settings,
   HelpCircle,
   ChevronRight,
-  ChevronDown
+  ChevronDown,
+  Zap
 } from "lucide-react";
 import { UserButton, useUser } from "@clerk/nextjs";
 import { Venture } from "@/lib/store/ventureStore";
@@ -31,6 +32,8 @@ export interface SidebarProps {
   onOpenCreateVenture: () => void;
   isDailyCallActive: boolean;
   setIsDailyCallActive: (active: boolean) => void;
+  onOpenSettings?: () => void;
+  onOpenHelp?: () => void;
 }
 
 export function Sidebar({
@@ -42,6 +45,8 @@ export function Sidebar({
   onOpenCreateVenture,
   isDailyCallActive,
   setIsDailyCallActive,
+  onOpenSettings,
+  onOpenHelp,
 }: SidebarProps) {
   const { user } = useUser();
   const currentVenture = ventures.find((v) => v.id === activeVentureId) || ventures[0];
@@ -71,18 +76,12 @@ export function Sidebar({
       {/* Top Brand & Main Navigation */}
       <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4 scrollbar-none">
         {/* Brand Logo */}
-        <Link href="/" className="flex items-center gap-2 px-1.5 group">
-          <div className="w-7 h-7 rounded-lg bg-blue-600 flex items-center justify-center text-white font-bold text-sm shadow-sm shadow-blue-500/20 group-hover:scale-105 transition-transform shrink-0">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M12 2L4 6V18L12 22L20 18V6L12 2Z" fill="currentColor" opacity="0.2" />
-              <path d="M6 8L12 5L18 8V16L12 19L6 16V8Z" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M12 12V19" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-              <path d="M12 12L18 8.5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-            </svg>
-          </div>
-          <span className="text-base font-bold tracking-tight text-slate-900">
-            Founder<span className="text-blue-600">Ally</span>
-          </span>
+        <Link href="/" className="flex items-center gap-2 px-1 group py-0.5">
+          <img
+            src="/founderally-logo.png"
+            alt="FounderAlly"
+            className="h-7 w-auto object-contain group-hover:scale-105 transition-transform"
+          />
         </Link>
 
         {/* Primary Views (Home & Daily Call) */}
@@ -100,7 +99,13 @@ export function Sidebar({
           </button>
 
           <button
-            onClick={() => setIsDailyCallActive(!isDailyCallActive)}
+            onClick={() => {
+              const nextState = !isDailyCallActive;
+              setIsDailyCallActive(nextState);
+              if (nextState) {
+                setActiveTab("Board");
+              }
+            }}
             className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg font-semibold text-xs transition-colors ${
               isDailyCallActive
                 ? "bg-rose-50 text-rose-700 font-bold"
@@ -208,16 +213,36 @@ export function Sidebar({
             <span className="font-bold text-slate-800">{progressPercent}%</span>
           </div>
         </div>
+
+        {/* Sleek Minimal Plan Pill */}
+        <Link
+          href="/pricing"
+          className="flex items-center justify-between px-2.5 py-2 rounded-xl bg-slate-100/90 hover:bg-slate-200/80 text-slate-700 hover:text-slate-900 transition-all group border border-slate-200/70"
+        >
+          <div className="flex items-center gap-1.5">
+            <Zap className="w-3.5 h-3.5 text-blue-600 fill-blue-600/20 shrink-0" />
+            <span className="text-[11px] font-bold text-slate-800">7-Day Trial</span>
+          </div>
+          <span className="text-[10px] font-extrabold uppercase tracking-wider text-blue-700 bg-blue-50 group-hover:bg-blue-100/80 px-1.5 py-0.5 rounded-md border border-blue-200/80 transition-colors">
+            Upgrade
+          </span>
+        </Link>
       </div>
 
       {/* Bottom Profile & Settings Area */}
       <div className="p-4 border-t border-slate-200/80 space-y-2 bg-slate-50/50">
         <div className="flex items-center justify-between px-2 text-xs font-medium text-slate-600">
-          <button className="flex items-center gap-2 hover:text-slate-900 transition-colors">
+          <button
+            onClick={onOpenSettings}
+            className="flex items-center gap-1.5 hover:text-slate-900 transition-colors"
+          >
             <Settings className="w-3.5 h-3.5 text-slate-400" />
             <span>Settings</span>
           </button>
-          <button className="flex items-center gap-2 hover:text-slate-900 transition-colors">
+          <button
+            onClick={onOpenHelp}
+            className="flex items-center gap-1.5 hover:text-slate-900 transition-colors"
+          >
             <HelpCircle className="w-3.5 h-3.5 text-slate-400" />
             <span>Help & Support</span>
           </button>
