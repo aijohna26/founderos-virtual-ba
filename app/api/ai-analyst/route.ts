@@ -1,5 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 
+export interface AIAction {
+  type: "create_card" | "move_card" | "add_priority" | "update_assumption";
+  column?: "backlog" | "today" | "in_progress" | "done" | "blocked";
+  title?: string;
+  category?: "Feature" | "Growth" | "Experiment" | "Research" | "Technical" | "Design" | "Legal";
+  priority?: "High" | "Medium" | "Low";
+  cardTitle?: string;
+  toColumn?: "backlog" | "today" | "in_progress" | "done" | "blocked";
+  tag?: string;
+  statement?: string;
+  status?: "Testing" | "Supported" | "Rejected";
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { message, venture, history, memories } = await req.json();
@@ -15,7 +28,19 @@ export async function POST(req: NextRequest) {
         ? memories.map((m: { category: string; fact: string }) => `• [${m.category}] ${m.fact}`).join("\n")
         : "No prior memories recorded yet.";
 
-    const systemPrompt = `You are FounderAlly, a world-class AI Business Analyst working alongside early-stage startup founders.
+    const getColItems = (col: any) => {
+      if (!col) return [];
+      const items = Array.isArray(col) ? col : Array.isArray(col.items) ? col.items : [];
+      return items;
+    };
+
+    const backlogCards = getColItems(venture?.columns?.backlog);
+    const todayCards = getColItems(venture?.columns?.today);
+    const inProgressCards = getColItems(venture?.columns?.in_progress);
+    const doneCards = getColItems(venture?.columns?.done);
+    const blockedCards = getColItems(venture?.columns?.blocked);
+
+    const systemPrompt = `You are FounderAlly, a world-class AI Business Analyst and autonomous co-pilot for early-stage startup founders.
 Your core promise: "Your AI Business Analyst for every founder decision."
 
 Current Venture Context:
@@ -30,17 +55,40 @@ Current Venture Context:
         .join("\n") || "None logged yet"
     }
 
-Long-Term Database Memory & Established Facts:
+Live Kanban Board State (You have full visibility and control):
+- BACKLOG (${backlogCards.length}): ${backlogCards.map((c: any) => c.title).join("; ") || "Empty"}
+- TODAY (${todayCards.length}): ${todayCards.map((c: any) => c.title).join("; ") || "Empty"}
+- IN PROGRESS (${inProgressCards.length}): ${inProgressCards.map((c: any) => c.title).join("; ") || "Empty"}
+- DONE (${doneCards.length}): ${doneCards.map((c: any) => c.title).join("; ") || "Empty"}
+- BLOCKED (${blockedCards.length}): ${blockedCards.map((c: any) => c.title).join("; ") || "Empty"}
+
+Long-Term Database Memory:
 ${formattedMemories}
 
-Core Operating Principles:
-1. Ask before assuming: If crucial details are missing, ask sharp clarifying questions instead of guessing.
-2. Challenge the founder: Point out risky assumptions, lack of willingness-to-pay evidence, or scope creep.
-3. Evidence over opinion: Suggest concrete validation experiments (e.g. 5 problem interviews, smoke test landing pages, pre-sales).
-4. Convert conversation into work: Proactively suggest actionable tasks or risk items when applicable.
-5. Voice Optimization: Keep responses clear, natural to speak aloud, and punchy (1-3 short paragraphs max, avoid excessive symbols).`;
+Autonomous Board Actions & Ticket Creation Superpower:
+You have the power to create and update tickets on the live board! When the founder asks you to create a ticket, add a card, move a card, or update tasks, you MUST include a JSON action block at the very end of your response formatted exactly like this:
+\`\`\`json
+{
+  "actions": [
+    { "type": "create_card", "column": "today", "title": "5 competitor pricing teardowns", "category": "Experiment", "priority": "High" },
+    { "type": "move_card", "cardTitle": "Interactive 2D-to-3D Floorplan", "toColumn": "done" },
+    { "type": "add_priority", "title": "Run 3 Studio Interviews", "tag": "Experiment", "priority": "High" }
+  ]
+}
+\`\`\`
 
-    // If Gemini API Key is available, call Gemini
+Supported Action Types:
+- "create_card": column ("backlog"|"today"|"in_progress"|"done"|"blocked"), title, category ("Feature"|"Growth"|"Experiment"|"Research"|"Technical"|"Design"|"Legal"), priority ("High"|"Medium"|"Low")
+- "move_card": cardTitle (substring or full title of the card to move), toColumn ("backlog"|"today"|"in_progress"|"done"|"blocked")
+- "add_priority": title, tag ("Experiment"|"Technical"|"Growth"|"Research"), priority ("High"|"Medium"|"Low")
+- "update_assumption": statement, status ("Testing"|"Supported"|"Rejected")
+
+Voice Optimization Rules:
+1. Speak directly, concisely, and naturally aloud (1-3 short paragraphs).
+2. Proactively confirm any board action you take (e.g. "I've added the ticket to Today's list and marked it High priority.").
+3. In morning standups, review blocked and in-progress tickets by name.`;
+
+    // 1. Call Gemini API if available
     if (apiKey && apiKey.trim().length > 0) {
       const geminiEndpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
@@ -58,46 +106,130 @@ Core Operating Principles:
           contents,
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 600,
+            maxOutputTokens: 800,
           },
         }),
       });
 
       if (res.ok) {
         const data = await res.json();
-        const reply =
+        const rawReply =
           data.candidates?.[0]?.content?.parts?.[0]?.text ||
-          "I've analyzed your input. Let's validate the primary hypothesis before proceeding.";
-        return NextResponse.json({ reply });
+          "I've analyzed your request. Let's validate the primary hypothesis.";
+
+        // Extract JSON action block if present
+        let cleanReply = rawReply;
+        let actions: AIAction[] = [];
+
+        const jsonMatch = rawReply.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMatch && jsonMatch[1]) {
+          try {
+            const parsed = JSON.parse(jsonMatch[1]);
+            if (Array.isArray(parsed.actions)) {
+              actions = parsed.actions;
+            }
+            // Strip JSON block from spoken reply
+            cleanReply = rawReply.replace(/```json[\s\S]*?```/, "").trim();
+          } catch (e) {
+            console.error("Failed to parse AI action JSON:", e);
+          }
+        }
+
+        return NextResponse.json({ reply: cleanReply, actions });
       }
     }
 
-    // High-intelligence contextual fallback engine
+    // 2. High-Intelligence Fallback Engine with Real Action Synthesis
     const lower = message.toLowerCase();
     let reply = "";
+    const actions: AIAction[] = [];
 
-    if (lower.includes("price") || lower.includes("cost") || lower.includes("charge") || lower.includes("monetiz") || lower.includes("dollar")) {
+    // Check for "create card / ticket / task"
+    if (
+      lower.includes("create") ||
+      lower.includes("add card") ||
+      lower.includes("add ticket") ||
+      lower.includes("add a card") ||
+      lower.includes("add a ticket") ||
+      lower.includes("add task") ||
+      lower.includes("make a ticket") ||
+      lower.includes("new ticket")
+    ) {
+      let targetColumn: AIAction["column"] = "today";
+      if (lower.includes("backlog")) targetColumn = "backlog";
+      else if (lower.includes("in progress")) targetColumn = "in_progress";
+      else if (lower.includes("done")) targetColumn = "done";
+      else if (lower.includes("blocked")) targetColumn = "blocked";
+
+      // Extract card title from user message
+      let extractedTitle = message
+        .replace(/^(please\s+)?(create|add|make)\s+(a\s+)?(new\s+)?(card|ticket|task)\s+(called|named|for|to)?/i, "")
+        .replace(/(in|to|on)\s+(today|backlog|in progress|done|blocked)/gi, "")
+        .trim();
+
+      if (!extractedTitle || extractedTitle.length < 3) {
+        extractedTitle = `Validate hypothesis for ${venture?.name || "startup"}`;
+      }
+
+      actions.push({
+        type: "create_card",
+        column: targetColumn,
+        title: extractedTitle,
+        category: lower.includes("experiment") ? "Experiment" : lower.includes("growth") ? "Growth" : lower.includes("tech") ? "Technical" : "Feature",
+        priority: "High",
+      });
+
+      reply = `Done! I've created the card "${extractedTitle}" and placed it directly in ${targetColumn?.toUpperCase().replace("_", " ")}.\n\nLet's get this prioritized so we can de-risk our core assumptions.`;
+    }
+    // Check for "move card to done / today"
+    else if (lower.includes("move") || lower.includes("mark as done") || lower.includes("finished") || lower.includes("completed")) {
+      let targetCol: AIAction["toColumn"] = "done";
+      if (lower.includes("today")) targetCol = "today";
+      else if (lower.includes("backlog")) targetCol = "backlog";
+      else if (lower.includes("in progress")) targetCol = "in_progress";
+      else if (lower.includes("blocked")) targetCol = "blocked";
+
+      // Find best matching card title
+      const allCards = [...inProgressCards, ...todayCards, ...backlogCards, ...blockedCards, ...doneCards];
+      const matched = allCards.find((c: any) =>
+        lower.includes(c.title.toLowerCase().slice(0, 10))
+      ) || inProgressCards[0] || todayCards[0];
+
+      if (matched) {
+        actions.push({
+          type: "move_card",
+          cardTitle: matched.title,
+          toColumn: targetCol,
+        });
+
+        reply = `Fantastic progress! I've moved "${matched.title}" to ${targetCol?.toUpperCase().replace("_", " ")} and updated your Sprint velocity.\n\nWhat should we tackle next?`;
+      } else {
+        reply = `I've updated your board. Which specific card would you like me to move to ${targetCol?.toUpperCase()}?`;
+      }
+    }
+    // Standup board walkthrough
+    else if (lower.includes("standup") || lower.includes("walk through") || lower.includes("review cards") || lower.includes("board")) {
+      const inProgText = inProgressCards.length > 0 ? inProgressCards.map((c: any) => `"${c.title}"`).join(", ") : "no cards currently in progress";
+      const todayText = todayCards.length > 0 ? todayCards.map((c: any) => `"${c.title}"`).join(", ") : "no cards on today's agenda";
+      const blockedText = blockedCards.length > 0 ? `⚠️ We have ${blockedCards.length} blocker: ${blockedCards.map((c: any) => `"${c.title}"`).join(", ")}.` : "We have zero active blockers.";
+
+      reply = `Good morning founder! Let's do our standup for ${venture?.name || "your startup"}.\n\n` +
+        `• Active In Progress: ${inProgText}\n` +
+        `• Today's Focus: ${todayText}\n\n` +
+        `${blockedText}\n\nTell me what you completed yesterday or say "Create a ticket for..." to add work to the board!`;
+    }
+    // Pricing & monetization analysis
+    else if (lower.includes("price") || lower.includes("cost") || lower.includes("charge") || lower.includes("monetiz") || lower.includes("dollar")) {
       reply = `Let's analyze the pricing model for ${venture?.name || "your venture"}.\n\n` +
         `Key Risk: Founders frequently undercharge or copy competitors without testing willingness to pay. For ${venture?.targetCustomer || "your target users"}, if the tool doesn't save at least 5 hours per month, a recurring subscription will face heavy churn.\n\n` +
         `I recommend running a 5-interview pricing test before finalizing your tiers.`;
-    } else if (lower.includes("competitor") || lower.includes("alternative") || lower.includes("market")) {
-      reply = `Looking at the competitive landscape for ${venture?.name || "your startup"}:\n\n` +
-        `Your primary competitor isn't just other software — it is the manual workaround or spreadsheet your customer currently tolerates.\n\n` +
-        `What is the specific bottleneck that makes your solution 10x faster or more reliable than their existing habit?`;
-    } else if (lower.includes("mvp") || lower.includes("feature") || lower.includes("build") || lower.includes("code")) {
-      reply = `Regarding the MVP for ${venture?.name}:\n\n` +
-        `Let's focus strictly on solving "${venture?.problemStatement || "the core pain point"}".\n\n` +
-        `I recommend cutting all secondary integrations from this sprint and prioritizing only the primary user journey.`;
-    } else if (lower.includes("interview") || lower.includes("customer") || lower.includes("user")) {
-      reply = `Great initiative on customer discovery. When interviewing ${venture?.targetCustomer || "prospects"}, avoid asking hypothetical questions like "Would you use this?".\n\n` +
-        `Instead, ask: "When was the last time you experienced this problem, and what did it cost you to fix?" That reveals actual willingness to pay.`;
     } else {
       reply = `I've analyzed this in the context of ${venture?.name}.\n\n` +
         `Our immediate focus is de-risking: "${venture?.problemStatement || "validating the core opportunity"}".\n\n` +
-        `What is the biggest roadblock or assumption you want to stress-test next?`;
+        `You can tell me to "Create a ticket for XYZ", "Move XYZ to Done", or ask me to review our active board. What's on your mind?`;
     }
 
-    return NextResponse.json({ reply });
+    return NextResponse.json({ reply, actions });
   } catch (error) {
     console.error("AI Analyst API Error:", error);
     return NextResponse.json(

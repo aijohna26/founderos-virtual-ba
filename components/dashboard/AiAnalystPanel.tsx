@@ -17,9 +17,10 @@ import {
   Volume2,
   VolumeX,
   Brain,
-  Database
+  Database,
+  X
 } from "lucide-react";
-import { Venture, VentureStore, ChatMessage } from "@/lib/store/ventureStore";
+import { Venture, VentureStore, ChatMessage, KanbanCard } from "@/lib/store/ventureStore";
 import { VoiceEngine, VoiceState } from "@/lib/voice/voiceEngine";
 import { MemoryService, MemoryFact } from "@/lib/db/memoryService";
 
@@ -153,6 +154,8 @@ export function AiAnalystPanel({
             targetCustomer: venture.targetCustomer,
             problemStatement: venture.problemStatement,
             assumptions: venture.assumptions,
+            columns: venture.columns,
+            priorities: venture.priorities,
           },
           memories: activeMemories,
           history: updatedHistory.slice(-6),
@@ -164,6 +167,77 @@ export function AiAnalystPanel({
         data.reply ||
         `I've analyzed your input for ${venture.name}. Let's prioritize validating your core hypothesis.`;
 
+      // Apply any autonomous board actions returned by Gemini
+      let currentColumns = { ...venture.columns };
+      let currentPriorities = [...(venture.priorities || [])];
+      let currentAssumptions = [...(venture.assumptions || [])];
+
+      if (Array.isArray(data.actions) && data.actions.length > 0) {
+        for (const action of data.actions) {
+          if (action.type === "create_card" && action.title) {
+            const colKey = (action.column || "today") as keyof Venture["columns"];
+            const newCard: KanbanCard = {
+              id: "c-ai-" + Date.now() + Math.random().toString(36).substr(2, 4),
+              title: action.title,
+              category: action.category || "Feature",
+              priority: action.priority || "High",
+              owner: "YOU",
+            };
+            const existingItems = currentColumns[colKey]?.items || [];
+            currentColumns = {
+              ...currentColumns,
+              [colKey]: {
+                ...currentColumns[colKey],
+                items: [...existingItems, newCard],
+              },
+            };
+          } else if (action.type === "move_card" && action.cardTitle && action.toColumn) {
+            const toCol = action.toColumn as keyof Venture["columns"];
+            let foundCard: KanbanCard | null = null;
+            let fromCol: keyof Venture["columns"] | null = null;
+
+            for (const colName of Object.keys(currentColumns) as (keyof Venture["columns"])[]) {
+              const match = currentColumns[colName]?.items?.find((c) =>
+                c.title.toLowerCase().includes(action.cardTitle.toLowerCase().slice(0, 10))
+              );
+              if (match) {
+                foundCard = match;
+                fromCol = colName;
+                break;
+              }
+            }
+
+            if (foundCard && fromCol && fromCol !== toCol) {
+              const updatedFrom = (currentColumns[fromCol]?.items || []).filter(
+                (c) => c.id !== foundCard!.id
+              );
+              const updatedTo = [
+                ...(currentColumns[toCol]?.items || []),
+                { ...foundCard, completed: toCol === "done" },
+              ];
+
+              currentColumns = {
+                ...currentColumns,
+                [fromCol]: { ...currentColumns[fromCol], items: updatedFrom },
+                [toCol]: { ...currentColumns[toCol], items: updatedTo },
+              };
+            }
+          } else if (action.type === "add_priority" && action.title) {
+            const newPrio = {
+              id: "pr-" + Date.now(),
+              num: currentPriorities.length + 1,
+              title: action.title,
+              tag: action.tag || "Experiment",
+              tagColor: "bg-blue-50 text-blue-700 border-blue-200",
+              owner: "YOU",
+              priority: action.priority || "High",
+              priorityColor: "text-rose-600 font-bold",
+            };
+            currentPriorities = [...currentPriorities, newPrio];
+          }
+        }
+      }
+
       const aiMsg: ChatMessage = {
         id: "ai-" + Date.now(),
         sender: "ai",
@@ -173,6 +247,9 @@ export function AiAnalystPanel({
 
       const finalVenture = {
         ...venture,
+        columns: currentColumns,
+        priorities: currentPriorities,
+        assumptions: currentAssumptions,
         chatHistory: [...updatedHistory, aiMsg],
       };
 
@@ -248,20 +325,55 @@ export function AiAnalystPanel({
     }
   };
 
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
+  if (isCollapsed) {
+    return (
+      <button
+        onClick={() => setIsCollapsed(false)}
+        className="fixed bottom-6 right-6 z-40 bg-white/95 backdrop-blur-xs border-2 border-blue-600 shadow-xl rounded-full p-2 pr-4 flex items-center gap-3 hover:scale-105 transition-all group animate-in slide-in-from-right-4"
+        title="Open AI Business Analyst Co-Pilot"
+      >
+        <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-white shadow-md relative shrink-0">
+          <Image
+            src="/avatar-ai-ba.jpg"
+            alt="AI BA"
+            width={40}
+            height={40}
+            className="w-full h-full object-cover"
+          />
+          {isDailyCallActive && (
+            <span className="absolute bottom-0 right-0 w-3 h-3 rounded-full bg-rose-500 ring-2 ring-white animate-ping" />
+          )}
+        </div>
+        <div className="text-left">
+          <div className="text-xs font-bold text-slate-900 group-hover:text-blue-600 transition-colors flex items-center gap-1">
+            <span>AI Business Analyst</span>
+            <span className="text-[9px] px-1 rounded bg-blue-100 text-blue-700 font-extrabold">Gemini</span>
+          </div>
+          <div className="text-[10px] text-slate-500 font-medium flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span>{isDailyCallActive ? "Daily Call Active" : "Online · Click to expand"}</span>
+          </div>
+        </div>
+      </button>
+    );
+  }
+
   return (
-    <aside className="w-80 lg:w-96 bg-white border-l border-slate-200/90 flex flex-col justify-between h-screen sticky top-0 z-30 select-none shrink-0 shadow-xs">
+    <aside className="w-64 bg-white border-l border-slate-200/90 flex flex-col justify-between h-screen sticky top-0 z-30 select-none shrink-0 shadow-xs transition-all duration-200">
       {/* 1. Header */}
-      <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+      <div className="p-3 border-b border-slate-100 flex items-center justify-between">
         <div>
           <div className="flex items-center gap-1.5">
-            <h2 className="text-sm font-bold text-slate-900">AI Business Analyst</h2>
-            <span className="text-[10px] font-black px-1.5 py-0.5 rounded-md bg-blue-100 text-blue-700">
+            <h2 className="text-xs font-bold text-slate-900">AI BA Co-Pilot</h2>
+            <span className="text-[9px] font-black px-1.5 py-0.2 rounded-md bg-blue-100 text-blue-700">
               Gemini
             </span>
           </div>
-          <div className="flex items-center gap-1.5 text-xs text-slate-500 font-medium mt-0.5">
+          <div className="flex items-center gap-1 text-[10px] text-slate-500 font-medium mt-0.5">
             <span
-              className={`w-2 h-2 rounded-full ${
+              className={`w-1.5 h-1.5 rounded-full ${
                 isSpeakingAI
                   ? "bg-purple-500 animate-ping"
                   : voiceState === "listening"
@@ -269,25 +381,25 @@ export function AiAnalystPanel({
                   : "bg-emerald-500"
               }`}
             />
-            <span>
+            <span className="truncate max-w-[110px]">
               {isSpeakingAI
                 ? "Speaking aloud..."
                 : voiceState === "listening"
-                ? "Listening to your voice..."
+                ? "Listening..."
                 : `Online · ${venture.name}`}
             </span>
           </div>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5">
           {/* Memory Drawer button */}
           <button
             onClick={() => setShowMemoryModal(true)}
-            className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-500 hover:text-blue-600 transition-colors relative"
+            className="p-1 rounded-lg hover:bg-slate-100 text-slate-500 hover:text-blue-600 transition-colors relative"
             title="View Venture Database Memory"
           >
-            <Brain className="w-4 h-4" />
-            <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-blue-600" />
+            <Brain className="w-3.5 h-3.5" />
+            <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-blue-600" />
           </button>
 
           {/* Voice mute audio button */}
@@ -297,62 +409,65 @@ export function AiAnalystPanel({
               setVoiceAudioEnabled(next);
               if (!next) VoiceEngine.stopSpeaking();
             }}
-            className={`p-1.5 rounded-xl transition-colors ${
+            className={`p-1 rounded-lg transition-colors ${
               voiceAudioEnabled
                 ? "hover:bg-slate-100 text-slate-500 hover:text-blue-600"
                 : "bg-rose-50 text-rose-600"
             }`}
             title={voiceAudioEnabled ? "Voice Output Active" : "Voice Output Muted"}
           >
-            {voiceAudioEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+            {voiceAudioEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
+          </button>
+
+          {/* Collapse Panel Button */}
+          <button
+            onClick={() => setIsCollapsed(true)}
+            className="p-1 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors"
+            title="Collapse Chat Panel for more space"
+          >
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
       {/* 2. Top Voice / Daily Call Section */}
-      <div className="p-4 border-b border-slate-100 bg-gradient-to-b from-blue-50/40 to-white flex flex-col items-center">
+      <div className="p-3 border-b border-slate-100 bg-gradient-to-b from-blue-50/30 to-white flex flex-col items-center">
         {/* Waveform and Avatar Container */}
-        <div className="flex items-center justify-center gap-4 w-full my-2">
+        <div className="flex items-center justify-center gap-2.5 w-full my-1">
           {/* Left Waveform Bars */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5">
             <span
-              className={`w-1 bg-blue-400 rounded-full transition-all duration-150 ${
-                isSpeakingAI || voiceState === "listening" ? "h-6 animate-pulse" : "h-3"
+              className={`w-0.5 bg-blue-400 rounded-full transition-all duration-150 ${
+                isSpeakingAI || voiceState === "listening" ? "h-5 animate-pulse" : "h-2"
               }`}
             />
             <span
-              className={`w-1 bg-blue-500 rounded-full transition-all duration-150 ${
-                isSpeakingAI || voiceState === "listening" ? "h-9 animate-bounce" : "h-6"
+              className={`w-0.5 bg-blue-500 rounded-full transition-all duration-150 ${
+                isSpeakingAI || voiceState === "listening" ? "h-7 animate-bounce" : "h-4"
               }`}
               style={{ animationDelay: "150ms" }}
             />
             <span
-              className={`w-1 bg-indigo-600 rounded-full transition-all duration-150 ${
-                isSpeakingAI || voiceState === "listening" ? "h-12 animate-pulse" : "h-9"
+              className={`w-0.5 bg-indigo-600 rounded-full transition-all duration-150 ${
+                isSpeakingAI || voiceState === "listening" ? "h-9 animate-pulse" : "h-6"
               }`}
               style={{ animationDelay: "300ms" }}
-            />
-            <span
-              className={`w-1 bg-blue-400 rounded-full transition-all duration-150 ${
-                isSpeakingAI || voiceState === "listening" ? "h-7 animate-bounce" : "h-5"
-              }`}
-              style={{ animationDelay: "450ms" }}
             />
           </div>
 
           {/* AI Avatar Circle */}
           <div className="relative">
             <div
-              className={`w-20 h-20 rounded-full p-1 bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-500 shadow-lg transition-all ${
-                isSpeakingAI ? "ring-4 ring-purple-400/50 shadow-purple-500/30 scale-105" : "shadow-blue-500/20"
+              className={`w-14 h-14 rounded-full p-0.5 bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-500 shadow-md transition-all ${
+                isSpeakingAI ? "ring-2 ring-purple-400/50 shadow-purple-500/30 scale-105" : "shadow-blue-500/20"
               }`}
             >
               <div className="w-full h-full rounded-full overflow-hidden relative border-2 border-white shadow-inner bg-slate-100">
                 <Image
                   src="/avatar-ai-ba.jpg"
                   alt="AI Business Analyst"
-                  width={80}
-                  height={80}
+                  width={56}
+                  height={56}
                   className="w-full h-full object-cover object-center"
                   priority
                 />
@@ -360,7 +475,7 @@ export function AiAnalystPanel({
             </div>
             {isDailyCallActive && (
               <span
-                className={`absolute bottom-0 right-0 w-4 h-4 rounded-full ring-2 ring-white ${
+                className={`absolute bottom-0 right-0 w-3 h-3 rounded-full ring-2 ring-white ${
                   isSpeakingAI ? "bg-purple-500 animate-ping" : "bg-emerald-500"
                 }`}
               />
@@ -368,70 +483,64 @@ export function AiAnalystPanel({
           </div>
 
           {/* Right Waveform Bars */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0.5">
             <span
-              className={`w-1 bg-blue-400 rounded-full transition-all duration-150 ${
-                isSpeakingAI || voiceState === "listening" ? "h-7 animate-bounce" : "h-5"
-              }`}
-              style={{ animationDelay: "200ms" }}
-            />
-            <span
-              className={`w-1 bg-indigo-600 rounded-full transition-all duration-150 ${
-                isSpeakingAI || voiceState === "listening" ? "h-12 animate-pulse" : "h-9"
+              className={`w-0.5 bg-indigo-600 rounded-full transition-all duration-150 ${
+                isSpeakingAI || voiceState === "listening" ? "h-9 animate-pulse" : "h-6"
               }`}
               style={{ animationDelay: "400ms" }}
             />
             <span
-              className={`w-1 bg-blue-500 rounded-full transition-all duration-150 ${
-                isSpeakingAI || voiceState === "listening" ? "h-8 animate-bounce" : "h-6"
+              className={`w-0.5 bg-blue-500 rounded-full transition-all duration-150 ${
+                isSpeakingAI || voiceState === "listening" ? "h-7 animate-bounce" : "h-4"
               }`}
               style={{ animationDelay: "100ms" }}
             />
             <span
-              className={`w-1 bg-blue-400 rounded-full transition-all duration-150 ${
-                isSpeakingAI || voiceState === "listening" ? "h-5 animate-pulse" : "h-3"
+              className={`w-0.5 bg-blue-400 rounded-full transition-all duration-150 ${
+                isSpeakingAI || voiceState === "listening" ? "h-5 animate-pulse" : "h-2"
               }`}
             />
           </div>
         </div>
 
         {/* Call Status & Timer */}
-        <div className="text-center mt-2 mb-3">
-          <p className="text-xs font-bold text-slate-800">
+        <div className="text-center mt-1 mb-2">
+          <p className="text-[11px] font-bold text-slate-800">
             {isDailyCallActive
               ? isSpeakingAI
-                ? "AI BA is speaking aloud..."
+                ? "AI BA speaking..."
                 : voiceState === "listening"
-                ? "Listening to microphone..."
-                : "Daily Call Active · Hands-Free"
+                ? "Listening to mic..."
+                : "Daily Call Active"
               : "Daily Call Standby"}
           </p>
-          <p className="text-[11px] font-mono text-slate-500 font-semibold mt-0.5">
+          <p className="text-[10px] font-mono text-slate-500 font-semibold mt-0.5">
             {formatTimer(callDuration)}
           </p>
         </div>
 
         {/* Audio / Video / Call Control Buttons */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
           {/* Mute toggle */}
           <button
             onClick={toggleMic}
-            className={`p-2.5 rounded-full transition-all ${
+            className={`p-2 rounded-full transition-all ${
               micMuted
                 ? "bg-rose-100 text-rose-600 hover:bg-rose-200"
                 : voiceState === "listening"
-                ? "bg-blue-600 text-white ring-4 ring-blue-200"
+                ? "bg-blue-600 text-white ring-2 ring-blue-200"
                 : "bg-slate-100 text-slate-700 hover:bg-slate-200"
             }`}
             title={micMuted ? "Unmute Microphone" : "Mute Microphone"}
           >
-            {micMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            {micMuted ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
           </button>
 
           {/* End Call / Start Call Button */}
           <button
             onClick={toggleCall}
-            className={`p-3 rounded-full text-white shadow-md transition-all ${
+            className={`p-2.5 rounded-full text-white shadow-md transition-all ${
               isDailyCallActive
                 ? "bg-rose-600 hover:bg-rose-700 shadow-rose-500/30"
                 : "bg-blue-600 hover:bg-blue-700 shadow-blue-500/30"
@@ -439,22 +548,38 @@ export function AiAnalystPanel({
             title={isDailyCallActive ? "End Daily Call" : "Start Daily Call"}
           >
             {isDailyCallActive ? (
-              <PhoneOff className="w-4 h-4" />
+              <PhoneOff className="w-3.5 h-3.5" />
             ) : (
-              <PhoneCall className="w-4 h-4" />
+              <PhoneCall className="w-3.5 h-3.5" />
             )}
           </button>
 
           {/* Video toggle */}
           <button
             onClick={() => setVideoActive(!videoActive)}
-            className={`p-2.5 rounded-full transition-all ${
+            className={`p-2 rounded-full transition-all ${
               videoActive
                 ? "bg-blue-100 text-blue-700 hover:bg-blue-200"
                 : "bg-slate-100 text-slate-700 hover:bg-slate-200"
             }`}
           >
-            {videoActive ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
+            {videoActive ? <Video className="w-3.5 h-3.5" /> : <VideoOff className="w-3.5 h-3.5" />}
+          </button>
+        </div>
+
+        {/* Morning Standup Quick Action */}
+        <div className="w-full mt-2 pt-2 border-t border-slate-100/80 flex items-center justify-center">
+          <button
+            onClick={() => {
+              if (!isDailyCallActive) setIsDailyCallActive(true);
+              submitMessage(
+                `Let's do our daily morning standup review for ${venture.name}. Walk me through our active cards on the board, any blocked tasks, and our #1 priority for today.`
+              );
+            }}
+            className="w-full py-1.5 px-2.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-[10px] flex items-center justify-center gap-1.5 transition-colors border border-blue-200/50"
+          >
+            <Sparkles className="w-3 h-3 text-blue-600" />
+            <span>Walk Through Board Cards</span>
           </button>
         </div>
       </div>

@@ -12,9 +12,16 @@ import {
   Check,
   Flag,
   ArrowRight,
-  AlertCircle
+  AlertCircle,
+  GripVertical,
+  Trash2,
+  AlignLeft,
+  CheckSquare,
+  Lightbulb,
+  X
 } from "lucide-react";
 import { Venture, VentureStore, KanbanCard } from "@/lib/store/ventureStore";
+import { CardDetailModal } from "@/components/dashboard/CardDetailModal";
 
 export interface BoardTabProps {
   venture: Venture;
@@ -23,9 +30,11 @@ export interface BoardTabProps {
 
 export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
   const [searchQuery, setSearchQuery] = useState("");
-  const [addCardColumn, setAddCardColumn] = useState<keyof Venture["columns"] | null>(null);
-  const [newCardTitle, setNewCardTitle] = useState("");
-  const [newCardCategory, setNewCardCategory] = useState<KanbanCard["category"]>("Feature");
+  const [selectedCard, setSelectedCard] = useState<{ card: KanbanCard; colKey: keyof Venture["columns"] } | null>(null);
+  const [quickAddCol, setQuickAddCol] = useState<keyof Venture["columns"] | null>(null);
+  const [quickAddTitle, setQuickAddTitle] = useState("");
+  const [draggedCard, setDraggedCard] = useState<{ id: string; fromCol: keyof Venture["columns"] } | null>(null);
+  const [dragOverCol, setDragOverCol] = useState<keyof Venture["columns"] | null>(null);
 
   const columns = venture.columns;
 
@@ -50,14 +59,18 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
     }
   };
 
-  const handleAddCard = (colKey: keyof Venture["columns"]) => {
-    if (!newCardTitle.trim()) return;
+  const handleQuickAdd = (colKey: keyof Venture["columns"]) => {
+    if (!quickAddTitle.trim()) {
+      setQuickAddCol(null);
+      return;
+    }
 
     const newCard: KanbanCard = {
       id: "c-" + Date.now(),
-      title: newCardTitle.trim(),
-      category: newCardCategory,
+      title: quickAddTitle.trim(),
+      category: "Feature",
       owner: "YOU",
+      priority: "Medium",
     };
 
     const updatedVenture: Venture = {
@@ -66,28 +79,28 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
         ...venture.columns,
         [colKey]: {
           ...venture.columns[colKey],
-          items: [...venture.columns[colKey].items, newCard],
+          items: [...(venture.columns[colKey]?.items || []), newCard],
         },
       },
     };
 
     VentureStore.updateVenture(updatedVenture);
     onUpdateVenture(updatedVenture);
-    setNewCardTitle("");
-    setAddCardColumn(null);
+    setQuickAddTitle("");
+    setQuickAddCol(colKey); // keep open for rapid entry like Trello
   };
 
-  // Move card to next column
   const handleMoveCard = (
     fromCol: keyof Venture["columns"],
     toCol: keyof Venture["columns"],
     cardId: string
   ) => {
-    const card = venture.columns[fromCol].items.find((c) => c.id === cardId);
+    if (fromCol === toCol) return;
+    const card = venture.columns[fromCol]?.items?.find((c) => c.id === cardId);
     if (!card) return;
 
-    const updatedFrom = venture.columns[fromCol].items.filter((c) => c.id !== cardId);
-    const updatedTo = [...venture.columns[toCol].items, { ...card, completed: toCol === "done" }];
+    const updatedFrom = (venture.columns[fromCol]?.items || []).filter((c) => c.id !== cardId);
+    const updatedTo = [...(venture.columns[toCol]?.items || []), { ...card, completed: toCol === "done" }];
 
     const updatedVenture: Venture = {
       ...venture,
@@ -102,10 +115,80 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
     onUpdateVenture(updatedVenture);
   };
 
-  // Top unvalidated assumption for AI insight
-  const topRiskiestAssumption =
-    venture.assumptions.find((a) => a.importance === "High" && a.status !== "Supported") ||
-    venture.assumptions[0];
+  const handleDeleteCard = (cardId: string, colKey: keyof Venture["columns"]) => {
+    const updatedCol = (venture.columns[colKey]?.items || []).filter((c) => c.id !== cardId);
+    const updatedVenture: Venture = {
+      ...venture,
+      columns: {
+        ...venture.columns,
+        [colKey]: { ...venture.columns[colKey], items: updatedCol },
+      },
+    };
+    VentureStore.updateVenture(updatedVenture);
+    onUpdateVenture(updatedVenture);
+  };
+
+  const handleUpdateCard = (updatedCard: KanbanCard, targetCol?: keyof Venture["columns"]) => {
+    if (!selectedCard) return;
+    const fromCol = selectedCard.colKey;
+    const toCol = targetCol || fromCol;
+
+    if (fromCol === toCol) {
+      const updatedList = (venture.columns[fromCol]?.items || []).map((c) =>
+        c.id === updatedCard.id ? updatedCard : c
+      );
+      const updatedVenture: Venture = {
+        ...venture,
+        columns: {
+          ...venture.columns,
+          [fromCol]: { ...venture.columns[fromCol], items: updatedList },
+        },
+      };
+      VentureStore.updateVenture(updatedVenture);
+      onUpdateVenture(updatedVenture);
+    } else {
+      const updatedFrom = (venture.columns[fromCol]?.items || []).filter((c) => c.id !== updatedCard.id);
+      const updatedTo = [...(venture.columns[toCol]?.items || []), updatedCard];
+      const updatedVenture: Venture = {
+        ...venture,
+        columns: {
+          ...venture.columns,
+          [fromCol]: { ...venture.columns[fromCol], items: updatedFrom },
+          [toCol]: { ...venture.columns[toCol], items: updatedTo },
+        },
+      };
+      VentureStore.updateVenture(updatedVenture);
+      onUpdateVenture(updatedVenture);
+    }
+
+    setSelectedCard({ card: updatedCard, colKey: toCol });
+  };
+
+  // Drag and drop handlers
+  const handleDragStart = (e: React.DragEvent, cardId: string, fromCol: keyof Venture["columns"]) => {
+    setDraggedCard({ id: cardId, fromCol });
+    e.dataTransfer.setData("text/plain", JSON.stringify({ cardId, fromCol }));
+    e.dataTransfer.effectAllowed = "move";
+  };
+
+  const handleDragOver = (e: React.DragEvent, colKey: keyof Venture["columns"]) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragOverCol !== colKey) {
+      setDragOverCol(colKey);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent, toCol: keyof Venture["columns"]) => {
+    e.preventDefault();
+    setDragOverCol(null);
+    if (!draggedCard) return;
+
+    if (draggedCard.fromCol !== toCol) {
+      handleMoveCard(draggedCard.fromCol, toCol, draggedCard.id);
+    }
+    setDraggedCard(null);
+  };
 
   // Calculate metrics defensively
   const getColItems = (col: any) => {
@@ -124,366 +207,250 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
   const progressPercent = totalCards > 0 ? Math.round((doneCount / totalCards) * 100) : 0;
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-10">
-      {/* 1. Board Top Toolbar */}
+    <div className="space-y-6 max-w-7xl mx-auto pb-10 select-none">
+      {/* 1. Board Top Toolbar (Trello Style Header) */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-white p-4 rounded-3xl border border-slate-200/90 shadow-xs">
         <div className="flex flex-wrap items-center gap-2.5">
-          {/* Board View Switcher */}
-          <button className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 hover:bg-slate-50">
-            <span>Board View</span>
-            <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-          </button>
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 text-xs font-bold text-slate-800">
+            <span>Sprint 1 Board</span>
+          </div>
 
-          {/* Grouping */}
-          <button className="flex items-center gap-2 px-3.5 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-            <span>Group: Sprint</span>
-          </button>
-
-          {/* Filter */}
-          <button className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-            <Filter className="w-3.5 h-3.5 text-slate-400" />
-            <span>Filter</span>
-          </button>
-
-          {/* Sort */}
-          <button className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-            <ArrowUpDown className="w-3.5 h-3.5 text-slate-400" />
-            <span>Sort</span>
-          </button>
-
-          {/* Search Input */}
           <div className="relative">
             <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <input
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search cards..."
-              className="pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 w-40 sm:w-56"
+              placeholder="Search or filter cards..."
+              className="pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 w-44 sm:w-60"
             />
           </div>
         </div>
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setAddCardColumn("today")}
+            onClick={() => setQuickAddCol("today")}
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-md shadow-blue-500/20 transition-all"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Add Card</span>
           </button>
-
-          <button className="p-2 rounded-xl border border-slate-200 text-slate-500 hover:text-blue-600 hover:bg-slate-50 transition-colors">
-            <Sparkles className="w-4 h-4" />
-          </button>
-
-          <button className="p-2 rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50">
-            <MoreHorizontal className="w-4 h-4" />
-          </button>
         </div>
       </div>
 
-      {/* 2. Kanban Columns Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 items-start">
+      {/* 2. Kanban Columns Grid with Drag & Drop (Trello Style Horizontal Scroll) */}
+      <div className="flex items-start gap-4 overflow-x-auto pb-6 pr-8 scrollbar-thin">
         {(
           Object.entries(columns) as [
             keyof Venture["columns"],
             { name: string; items: KanbanCard[] }
           ][]
         ).map(([colKey, col]) => {
-          const filteredItems = col.items.filter((item) =>
+          const colItems = getColItems(col);
+          const filteredItems = colItems.filter((item: KanbanCard) =>
             item.title.toLowerCase().includes(searchQuery.toLowerCase())
           );
+          const isOver = dragOverCol === colKey;
+          const colDisplayName = (col?.name || colKey).replace(/_/g, " ").toUpperCase();
+          const isQuickAdding = quickAddCol === colKey;
 
           return (
             <div
               key={colKey}
-              className="bg-slate-50/80 rounded-3xl p-3.5 border border-slate-200/80 flex flex-col min-h-[500px]"
+              onDragOver={(e) => handleDragOver(e, colKey)}
+              onDragLeave={() => setDragOverCol(null)}
+              onDrop={(e) => handleDrop(e, colKey)}
+              className={`w-[275px] min-w-[275px] max-w-[275px] flex-none rounded-3xl p-3.5 border transition-all duration-200 flex flex-col min-h-[540px] ${
+                isOver
+                  ? "bg-blue-50/80 border-blue-400 ring-2 ring-blue-500/20 scale-[1.01]"
+                  : "bg-slate-100/70 border-slate-200/80"
+              }`}
             >
               {/* Column Header */}
-              <div className="flex items-center justify-between px-2 py-1.5 mb-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-extrabold tracking-wider text-slate-700">
-                    {col.name}
+              <div className="flex items-center justify-between px-2 py-1.5 mb-2.5">
+                <div className="flex items-center gap-1.5 min-w-0 pr-1">
+                  <span className="text-xs font-black tracking-wider text-slate-700 truncate">
+                    {colDisplayName}
                   </span>
-                  <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-600 font-bold text-[11px] flex items-center justify-center">
-                    {col.items.length}
+                  <span className="w-5 h-5 rounded-full bg-slate-200/90 text-slate-700 font-bold text-[10px] flex items-center justify-center shrink-0">
+                    {colItems.length}
                   </span>
                 </div>
+
                 <button
-                  onClick={() => setAddCardColumn(colKey)}
-                  className="text-slate-400 hover:text-slate-700 p-0.5 rounded-sm hover:bg-slate-200"
+                  onClick={() => setQuickAddCol(isQuickAdding ? null : colKey)}
+                  className="text-slate-400 hover:text-slate-700 p-1 rounded-lg hover:bg-slate-200/60 transition-colors"
+                  title="Add Card to this list"
                 >
                   <Plus className="w-3.5 h-3.5" />
                 </button>
               </div>
 
               {/* Cards Container */}
-              <div className="space-y-3 flex-1">
-                {filteredItems.map((item) => (
-                  <div
-                    key={item.id}
-                    className="bg-white rounded-2xl p-3.5 border border-slate-200/90 shadow-2xs hover:shadow-xs hover:border-slate-300 transition-all space-y-3 group relative"
-                  >
-                    <div className="text-xs font-bold text-slate-900 leading-snug">
-                      {item.title}
-                    </div>
+              <div className="space-y-2.5 flex-1">
+                {filteredItems.map((item: KanbanCard) => {
+                  const checklistTotal = item.checklists?.length || 0;
+                  const checklistDone = item.checklists?.filter((c) => c.done).length || 0;
 
-                    {/* Progress bar if present */}
-                    {item.progress !== undefined && (
-                      <div className="space-y-1">
-                        <div className="flex justify-between text-[10px] font-bold text-blue-600">
-                          <span>{item.progress}%</span>
-                        </div>
-                        <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                          <div
-                            className="bg-blue-600 h-full rounded-full"
-                            style={{ width: `${item.progress}%` }}
-                          />
+                  return (
+                    <div
+                      key={item.id}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, item.id, colKey)}
+                      onDragEnd={() => {
+                        setDraggedCard(null);
+                        setDragOverCol(null);
+                      }}
+                      onClick={() => setSelectedCard({ card: item, colKey })}
+                      className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-2xs hover:shadow-md hover:border-blue-400 transition-all flex flex-col justify-between min-h-[124px] group relative cursor-pointer hover:-translate-y-0.5 min-w-0 w-full"
+                    >
+                      {/* Top Label & Priority */}
+                      <div className="flex items-center justify-between gap-1.5">
+                        <span
+                          className={`text-[9px] font-extrabold px-2 py-0.5 rounded-md border truncate max-w-[100px] ${getTagBadgeStyle(
+                            item.category
+                          )}`}
+                        >
+                          {item.category}
+                        </span>
+
+                        <div className="flex items-center gap-1.5">
+                          {item.priority && (
+                            <span
+                              className={`text-[9px] font-bold px-2 py-0.5 rounded-md ${
+                                item.priority === "High"
+                                  ? "text-rose-600 bg-rose-50 border border-rose-100"
+                                  : "text-amber-600 bg-amber-50 border border-amber-100"
+                              }`}
+                            >
+                              {item.priority}
+                            </span>
+                          )}
+                          <GripVertical className="w-3.5 h-3.5 text-slate-300 group-hover:text-slate-400 opacity-60" />
                         </div>
                       </div>
-                    )}
 
-                    {/* Footer tags and assignee */}
+                      {/* Card Title with clean vertical spacing */}
+                      <div className="text-xs font-bold text-slate-900 leading-snug py-2 break-words line-clamp-3 min-w-0">
+                        {item.title}
+                      </div>
+
+                      {/* Trello Badges Row (Description, Checklist, Assumption, Progress) */}
+                      <div className="flex items-center justify-between pt-1 border-t border-slate-100/70 text-[10px] text-slate-400 font-medium">
+                        <div className="flex items-center gap-2">
+                          {item.description && (
+                            <div className="flex items-center gap-0.5" title="Has description">
+                              <AlignLeft className="w-3 h-3 text-slate-400" />
+                            </div>
+                          )}
+
+                          {checklistTotal > 0 && (
+                            <div
+                              className={`flex items-center gap-1 px-1.5 py-0.2 rounded-md ${
+                                checklistDone === checklistTotal
+                                  ? "bg-emerald-50 text-emerald-700 font-bold"
+                                  : "bg-slate-100 text-slate-600"
+                              }`}
+                              title={`Checklist: ${checklistDone}/${checklistTotal}`}
+                            >
+                              <CheckSquare className="w-2.5 h-2.5" />
+                              <span>
+                                {checklistDone}/{checklistTotal}
+                              </span>
+                            </div>
+                          )}
+
+                          {item.linkedAssumptionId && (
+                            <div
+                              className="flex items-center gap-0.5 text-amber-600"
+                              title="Linked to Venture Assumption"
+                            >
+                              <Lightbulb className="w-3 h-3" />
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Assignee Avatar / Completed Badge */}
+                        <div className="flex items-center gap-1.5 ml-auto">
+                          {item.completed && (
+                            <div className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
+                              <Check className="w-2.5 h-2.5 stroke-[3]" />
+                            </div>
+                          )}
+                          {item.owner && (
+                            <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-bold text-[9px] border border-slate-200">
+                              {item.owner}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* Inline Quick Add Card Composer (Trello Style) */}
+                {isQuickAdding && (
+                  <div className="p-2.5 bg-white rounded-2xl border-2 border-blue-500 shadow-md space-y-2 animate-in fade-in zoom-in-95">
+                    <textarea
+                      autoFocus
+                      value={quickAddTitle}
+                      onChange={(e) => setQuickAddTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          handleQuickAdd(colKey);
+                        }
+                      }}
+                      placeholder="Enter a title for this card..."
+                      className="w-full text-xs font-semibold text-slate-900 border-none focus:outline-none resize-none h-16 p-1 placeholder:text-slate-400"
+                    />
                     <div className="flex items-center justify-between pt-1">
-                      <span
-                        className={`text-[10px] font-bold px-2 py-0.5 rounded-md border ${getTagBadgeStyle(
-                          item.category
-                        )}`}
+                      <button
+                        onClick={() => handleQuickAdd(colKey)}
+                        className="px-3.5 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-sm"
                       >
-                        {item.category}
-                      </span>
-
-                      <div className="flex items-center gap-1.5">
-                        {item.completed && (
-                          <div className="w-4 h-4 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center">
-                            <Check className="w-2.5 h-2.5 stroke-[3]" />
-                          </div>
-                        )}
-                        {item.priority && (
-                          <span
-                            className={`text-[10px] font-bold ${
-                              item.priority === "High" ? "text-rose-600" : "text-amber-600"
-                            }`}
-                          >
-                            {item.priority}
-                          </span>
-                        )}
-                        {item.owner && (
-                          <span className="w-5 h-5 rounded-full bg-slate-100 text-slate-700 font-bold text-[10px] flex items-center justify-center border border-slate-200">
-                            {item.owner}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Move Action Quick Buttons on Hover */}
-                    <div className="opacity-0 group-hover:opacity-100 transition-opacity pt-2 border-t border-slate-100 flex items-center justify-between text-[10px] text-slate-400">
-                      {colKey !== "backlog" && (
-                        <button
-                          onClick={() => handleMoveCard(colKey, "backlog", item.id)}
-                          className="hover:text-blue-600 font-semibold"
-                        >
-                          ← Backlog
-                        </button>
-                      )}
-                      {colKey !== "today" && (
-                        <button
-                          onClick={() => handleMoveCard(colKey, "today", item.id)}
-                          className="hover:text-blue-600 font-semibold"
-                        >
-                          Today
-                        </button>
-                      )}
-                      {colKey !== "in_progress" && (
-                        <button
-                          onClick={() => handleMoveCard(colKey, "in_progress", item.id)}
-                          className="hover:text-blue-600 font-semibold"
-                        >
-                          In Progress
-                        </button>
-                      )}
-                      {colKey !== "done" && (
-                        <button
-                          onClick={() => handleMoveCard(colKey, "done", item.id)}
-                          className="hover:text-emerald-600 font-semibold"
-                        >
-                          Done ✓
-                        </button>
-                      )}
+                        Add card
+                      </button>
+                      <button
+                        onClick={() => setQuickAddCol(null)}
+                        className="p-1 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
-                ))}
+                )}
               </div>
 
-              {/* Add card quick button */}
-              <div className="mt-3 pt-2">
+              {/* Add Card Button at Bottom of Column (Trello style) */}
+              {!isQuickAdding && (
                 <button
-                  onClick={() => setAddCardColumn(colKey)}
-                  className="w-full py-2 text-center text-xs font-semibold text-slate-500 hover:text-slate-800 hover:bg-white rounded-xl transition-colors border border-dashed border-slate-200 flex items-center justify-center gap-1"
+                  onClick={() => {
+                    setQuickAddTitle("");
+                    setQuickAddCol(colKey);
+                  }}
+                  className="w-full py-2 px-2 text-left text-xs font-bold text-slate-500 hover:text-slate-900 hover:bg-slate-200/60 rounded-2xl transition-colors flex items-center gap-1.5 mt-2"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Add card</span>
+                  <span>Add a card</span>
                 </button>
-              </div>
+              )}
             </div>
           );
         })}
       </div>
 
-      {/* 3. AI INSIGHT Banner from real venture assumptions */}
-      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/80 rounded-3xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs">
-        <div className="flex items-start gap-3">
-          <div className="p-2 rounded-xl bg-blue-600 text-white shrink-0 shadow-md shadow-blue-500/20">
-            <Sparkles className="w-4 h-4" />
-          </div>
-          <div>
-            <div className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-0.5">
-              AI INSIGHT FOR {venture.name.toUpperCase()}
-            </div>
-            <p className="text-sm font-semibold text-slate-900">
-              {topRiskiestAssumption?.statement
-                ? `Key Risk: "${topRiskiestAssumption.statement}". De-risk this hypothesis before committing heavy engineering bandwidth.`
-                : "Continuous analytical monitoring active. What assumption should we test next?"}
-            </p>
-          </div>
-        </div>
-
-        <div className="shrink-0 flex items-center gap-3">
-          <button
-            onClick={() => handleAddCard("today")}
-            className="px-4 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold shadow-md shadow-blue-500/20 flex items-center gap-2 transition-all"
-          >
-            <span>Add Validation Test Card</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
-
-      {/* 4. Bottom Metric Summary Bar */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Sprint Health */}
-        <div className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-xs flex items-center justify-between">
-          <div>
-            <span className="text-xs font-semibold text-slate-500">Sprint Health</span>
-            <div className="text-xl font-black text-slate-900 mt-1">
-              {venture.columns.blocked.items.length > 0 ? "Needs Attention" : "Optimal"}
-            </div>
-            <span className="text-xs text-slate-400">
-              {venture.columns.blocked.items.length} blockers
-            </span>
-          </div>
-          <div className="w-16 h-8 text-blue-500">
-            <svg viewBox="0 0 50 20" className="w-full h-full stroke-current fill-none stroke-2">
-              <path d="M0 10 Q12 18 20 12 T35 5 T50 15" />
-            </svg>
-          </div>
-        </div>
-
-        {/* Progress */}
-        <div className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-xs flex items-center justify-between">
-          <div>
-            <span className="text-xs font-semibold text-slate-500">Progress</span>
-            <div className="text-xl font-black text-slate-900 mt-1">{progressPercent}%</div>
-            <span className="text-xs text-slate-400">
-              {doneCount} / {totalCards} cards done
-            </span>
-          </div>
-          <div className="w-10 h-10 rounded-full border-4 border-blue-600 border-t-slate-200" />
-        </div>
-
-        {/* Top Risk */}
-        <div className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-xs flex items-center justify-between">
-          <div>
-            <span className="text-xs font-semibold text-slate-500">Top Hypothesis</span>
-            <div className="text-sm font-black text-rose-600 mt-1 truncate max-w-[140px]">
-              {topRiskiestAssumption?.category || "Problem"} Risk
-            </div>
-            <span className="text-xs text-slate-400">{topRiskiestAssumption?.status || "Untested"}</span>
-          </div>
-          <div className="w-8 h-8 rounded-full bg-rose-100 text-rose-600 flex items-center justify-center">
-            <AlertCircle className="w-5 h-5 stroke-[2.5]" />
-          </div>
-        </div>
-
-        {/* Next Milestone */}
-        <div className="bg-white rounded-3xl p-5 border border-slate-200/90 shadow-xs flex items-center justify-between">
-          <div>
-            <span className="text-xs font-semibold text-slate-500">Target Goal</span>
-            <div className="text-sm font-black text-slate-900 mt-1 truncate max-w-[140px]">
-              {venture.milestones[0]?.title || "MVP Launch"}
-            </div>
-            <span className="text-xs text-slate-400">{venture.milestones[0]?.date || "Sprint 1"}</span>
-          </div>
-          <div className="w-8 h-8 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center">
-            <Flag className="w-4 h-4 fill-purple-600" />
-          </div>
-        </div>
-      </div>
-
-      {/* Add Card Modal */}
-      {addCardColumn && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold text-slate-900">
-                Add Card to {columns[addCardColumn]?.name}
-              </h3>
-              <button
-                onClick={() => setAddCardColumn(null)}
-                className="text-slate-400 hover:text-slate-600 font-bold text-sm"
-              >
-                ✕
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold text-slate-700">Card Title</label>
-                <input
-                  type="text"
-                  value={newCardTitle}
-                  onChange={(e) => setNewCardTitle(e.target.value)}
-                  placeholder="e.g., Run 5 pricing user tests"
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mt-1"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-700">Category Tag</label>
-                <select
-                  value={newCardCategory}
-                  onChange={(e) => setNewCardCategory(e.target.value as KanbanCard["category"])}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mt-1"
-                >
-                  <option value="Feature">Feature</option>
-                  <option value="Growth">Growth</option>
-                  <option value="Experiment">Experiment</option>
-                  <option value="Research">Research</option>
-                  <option value="Technical">Technical</option>
-                  <option value="Design">Design</option>
-                  <option value="Legal">Legal</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                onClick={() => setAddCardColumn(null)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleAddCard(addCardColumn)}
-                className="px-5 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-md"
-              >
-                Add Card
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* 3. Trello Card Detail Modal */}
+      {selectedCard && (
+        <CardDetailModal
+          card={selectedCard.card}
+          columnKey={selectedCard.colKey}
+          venture={venture}
+          isOpen={true}
+          onClose={() => setSelectedCard(null)}
+          onUpdateCard={handleUpdateCard}
+          onDeleteCard={handleDeleteCard}
+        />
       )}
     </div>
   );

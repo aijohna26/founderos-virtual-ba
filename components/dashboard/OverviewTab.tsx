@@ -331,11 +331,11 @@ export function OverviewTab({ venture, onUpdateVenture, setActiveTab }: Overview
                   onClick={() => setActiveTab("Assumptions")}
                   className="group flex items-center justify-between p-3.5 rounded-2xl border border-slate-200/70 hover:border-slate-300 hover:bg-slate-50/60 transition-all cursor-pointer"
                 >
-                  <div className="min-w-0 pr-3">
-                    <div className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors truncate">
+                  <div className="min-w-0 pr-3 flex-1">
+                    <div className="text-sm font-bold text-slate-900 group-hover:text-blue-600 transition-colors line-clamp-2 leading-snug">
                       {risk.statement}
                     </div>
-                    <div className="text-xs text-slate-500 font-normal">
+                    <div className="text-xs text-slate-500 font-normal line-clamp-1 mt-0.5">
                       {risk.evidence || "No customer evidence recorded yet."}
                     </div>
                   </div>

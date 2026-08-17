@@ -193,30 +193,33 @@ export function DailyCallAlertModal({
         </div>
       )}
 
-      {/* Quick Alarm Test Trigger (Accessible at bottom left) */}
-      <div className="fixed bottom-4 left-6 z-40 hidden md:flex items-center gap-1.5 bg-white/95 backdrop-blur-xs px-3 py-1.5 rounded-full border border-slate-200/90 shadow-xs text-slate-500 text-[11px] font-medium">
-        <Bell className="w-3 h-3 text-blue-600" />
-        <span>Daily Call Alarm (09:00 AM):</span>
-        <button
-          onClick={() => triggerTestAlert(15)}
-          className="hover:text-blue-600 font-bold hover:underline"
-        >
-          15m
-        </button>
-        <span>·</span>
-        <button
-          onClick={() => triggerTestAlert(10)}
-          className="hover:text-blue-600 font-bold hover:underline"
-        >
-          10m
-        </button>
-        <span>·</span>
-        <button
-          onClick={() => triggerTestAlert(5)}
-          className="hover:text-blue-600 font-bold hover:underline"
-        >
-          5m
-        </button>
+      {/* Quick Alarm Test Trigger (Wrapped neatly inside sidebar width) */}
+      <div className="fixed bottom-3 left-3 z-40 hidden md:flex flex-col gap-1 bg-white/95 backdrop-blur-xs px-2.5 py-1.5 rounded-xl border border-slate-200/90 shadow-xs text-slate-600 text-[10px] font-medium max-w-[170px] select-none">
+        <div className="flex items-center gap-1 font-bold text-slate-800">
+          <Bell className="w-3 h-3 text-blue-600 shrink-0" />
+          <span className="truncate">Alarm: 09:00 AM</span>
+        </div>
+        <div className="flex items-center gap-1 text-[10px]">
+          <span className="text-slate-400 font-medium">Test:</span>
+          <button
+            onClick={() => triggerTestAlert(15)}
+            className="px-1.5 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold transition-colors"
+          >
+            15m
+          </button>
+          <button
+            onClick={() => triggerTestAlert(10)}
+            className="px-1.5 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold transition-colors"
+          >
+            10m
+          </button>
+          <button
+            onClick={() => triggerTestAlert(5)}
+            className="px-1.5 py-0.5 rounded-md bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold transition-colors"
+          >
+            5m
+          </button>
+        </div>
       </div>
     </>
   );

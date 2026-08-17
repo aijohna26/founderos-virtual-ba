@@ -1,13 +1,21 @@
-"use client";
+export interface CardChecklistItem {
+  id: string;
+  text: string;
+  done: boolean;
+}
 
 export interface KanbanCard {
   id: string;
   title: string;
+  description?: string;
   category: "Feature" | "Growth" | "Experiment" | "Research" | "Technical" | "Design" | "Legal";
   owner?: string;
   priority?: "High" | "Medium" | "Low";
   progress?: number;
   completed?: boolean;
+  dueDate?: string;
+  checklists?: CardChecklistItem[];
+  linkedAssumptionId?: string;
 }
 
 export interface Assumption {

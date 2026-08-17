@@ -88,7 +88,7 @@ export default function DashboardPage() {
         />
 
         {/* Dynamic Main Workspace Canvas */}
-        <main className="flex-1 p-6 md:p-8 bg-slate-50/50">
+        <main className="flex-1 p-4 md:p-5 bg-slate-50/50 min-w-0">
           {activeTab === "Overview" && (
             <OverviewTab
               venture={activeVenture}
