@@ -1,57 +1,13 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Mic, MicOff, PhoneOff, Square, Sparkles, Volume2, Radio, Volume1, ShieldCheck, UserCheck, Settings2 } from "lucide-react";
+import Image from "next/image";
+import { Mic, MicOff, PhoneOff, Square, Sparkles, Volume2, Radio, Volume1, ShieldCheck, Settings2 } from "lucide-react";
+import { ADVISOR_PERSONAS, DEFAULT_ADVISOR, type AdvisorPersona } from "@/lib/config/advisorPersonas";
 
 export type AgentAudioState = "idle" | "listening" | "thinking" | "speaking" | "paused";
 
-export interface BusinessPersona {
-  id: string;
-  name: string;
-  title: string;
-  organization: string;
-  voiceName: string;
-  domain: string;
-  avatar: string;
-  style: "Strict & Analytical" | "Strategic Co-Founder" | "Technical Architect";
-  description: string;
-}
-
-export const SARAH_PERSONAS: BusinessPersona[] = [
-  {
-    id: "sarah-strict",
-    name: "Sarah Jenkins",
-    title: "Senior Lead AI Business Analyst",
-    organization: "FounderAlly Autonomous Co-Pilot",
-    voiceName: "Aoede (Google HD Neural)",
-    domain: "Agile BA & Sprint Auditor",
-    avatar: "/avatar-ai-ba.jpg",
-    style: "Strict & Analytical",
-    description: "Laser-focused on de-risking hypotheses, holding sprint commitments, and eliminating fluff.",
-  },
-  {
-    id: "sarah-cofounder",
-    name: "Sarah Jenkins",
-    title: "Venture Partner & Strategy BA",
-    organization: "FounderAlly Autonomous Co-Pilot",
-    voiceName: "Kore (Google HD Studio)",
-    domain: "Strategic Venture Building",
-    avatar: "/avatar-ai-ba.jpg",
-    style: "Strategic Co-Founder",
-    description: "Supportive, inquisitive, and challenges assumptions to accelerate product-market fit.",
-  },
-  {
-    id: "sarah-tech",
-    name: "Sarah Jenkins",
-    title: "Technical Requirements Architect",
-    organization: "FounderAlly Autonomous Co-Pilot",
-    voiceName: "Journey-F (Neural HD)",
-    domain: "PRDs & Feature Scoping",
-    avatar: "/avatar-ai-ba.jpg",
-    style: "Technical Architect",
-    description: "Deep dive on technical feasibility, ticket specifications, and acceptance criteria.",
-  },
-];
+export type BusinessPersona = AdvisorPersona;
 
 interface VoiceSphereVisualizerProps {
   persona?: BusinessPersona;
@@ -68,7 +24,7 @@ interface VoiceSphereVisualizerProps {
 }
 
 export const VoiceSphereVisualizer: React.FC<VoiceSphereVisualizerProps> = ({
-  persona = SARAH_PERSONAS[0],
+  persona = DEFAULT_ADVISOR,
   onSelectPersona,
   state,
   isCallActive,
@@ -220,8 +176,9 @@ export const VoiceSphereVisualizer: React.FC<VoiceSphereVisualizerProps> = ({
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowPersonaPicker(!showPersonaPicker)}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700/90 text-slate-200 border border-slate-700 text-xs font-semibold cursor-pointer transition-colors"
-            title="Change persona strictness & role"
+            disabled={isCallActive}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700/90 disabled:cursor-not-allowed disabled:opacity-60 text-slate-200 border border-slate-700 text-xs font-semibold cursor-pointer transition-colors"
+            title={isCallActive ? "End the stand-up before changing advisor" : "Change advisor and Gemini voice"}
           >
             <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
             <span>{persona.style}</span>
@@ -241,9 +198,9 @@ export const VoiceSphereVisualizer: React.FC<VoiceSphereVisualizerProps> = ({
       {showPersonaPicker && (
         <div className="absolute top-16 left-6 right-6 z-30 bg-slate-900/95 backdrop-blur-md rounded-2xl border border-slate-700 p-4 shadow-2xl space-y-2 animate-in fade-in zoom-in-95">
           <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-2">
-            Select Persona Strictness
+            Choose your advisor & voice
           </div>
-          {SARAH_PERSONAS.map((p) => (
+          {ADVISOR_PERSONAS.map((p) => (
             <button
               key={p.id}
               onClick={() => {
@@ -256,9 +213,10 @@ export const VoiceSphereVisualizer: React.FC<VoiceSphereVisualizerProps> = ({
                   : "bg-slate-800/60 border-slate-700/60 text-slate-300 hover:bg-slate-800"
               }`}
             >
-              <UserCheck className={`w-4 h-4 shrink-0 mt-0.5 ${persona.id === p.id ? "text-blue-400" : "text-slate-500"}`} />
+              <Image src={p.avatar} alt="" width={36} height={36} className="h-9 w-9 shrink-0 rounded-full object-cover ring-1 ring-slate-600" />
               <div>
-                <div className="font-semibold text-slate-100">{p.style}</div>
+                <div className="font-semibold text-slate-100">{p.name} · {p.style}</div>
+                <div className="mt-0.5 text-[10px] font-medium text-cyan-300">Gemini {p.voiceName} · {p.voiceCharacter}</div>
                 <div className="text-[11px] text-slate-400 font-normal">{p.description}</div>
               </div>
             </button>
@@ -294,9 +252,11 @@ export const VoiceSphereVisualizer: React.FC<VoiceSphereVisualizerProps> = ({
 
         {/* Central Persona Avatar Card */}
         <div className="relative w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden border-2 border-slate-700 shadow-2xl bg-slate-800 flex items-center justify-center group">
-          <img
+          <Image
             src={persona.avatar}
             alt={persona.name}
+            width={112}
+            height={112}
             className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-300"
           />
           {state === "speaking" && (
@@ -308,6 +268,9 @@ export const VoiceSphereVisualizer: React.FC<VoiceSphereVisualizerProps> = ({
         <div className="mt-2.5 text-center">
           <h3 className="text-sm font-bold text-slate-100">{persona.name}</h3>
           <p className="text-[11px] text-slate-400 max-w-xs">{persona.title}</p>
+          <p className="mt-1 text-[10px] font-semibold text-cyan-300">
+            Gemini {persona.voiceName} · {persona.voiceCharacter} voice
+          </p>
         </div>
       </div>
 
@@ -369,7 +332,7 @@ export const VoiceSphereVisualizer: React.FC<VoiceSphereVisualizerProps> = ({
                 title="Interrupt or stop current voice response"
               >
                 <Square className="w-3.5 h-3.5 text-rose-400 fill-rose-400" />
-                <span>Interrupt Sarah</span>
+                <span>Interrupt {persona.name.split(" ")[0]}</span>
               </button>
             )}
 

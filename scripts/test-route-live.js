@@ -9,10 +9,10 @@ async function testLiveConversation() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       systemInstruction: {
-        parts: [{ text: "You are Sarah, an expert startup co-pilot. Answer naturally and concisely like a human in 1-2 spoken sentences." }]
+        parts: [{ text: "You are Maya, an expert startup co-pilot. Answer naturally and concisely like a human in 1-2 spoken sentences." }]
       },
       contents: [
-        { role: "user", parts: [{ text: "Hey Sarah, what do you mean when you say we should test our core hypothesis?" }] }
+        { role: "user", parts: [{ text: "Hey Maya, what do you mean when you say we should test our core hypothesis?" }] }
       ],
       generationConfig: {
         temperature: 0.8,

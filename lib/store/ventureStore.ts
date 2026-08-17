@@ -89,6 +89,8 @@ export interface Venture {
   solutionSummary: string;
   strategy: VentureStrategy;
   standupTime?: string;
+  /** Advisor selection is persisted independently for this venture. */
+  advisorId?: string;
   currentSprint?: number;
   sprintStartDate?: string;
   sprintHistory?: SprintRecord[];

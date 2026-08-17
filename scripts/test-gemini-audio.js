@@ -27,7 +27,7 @@ async function testGeminiAudio() {
   try {
     const response = await ai.models.generateContent({
       model: "gemini-2.0-flash",
-      contents: "Say exactly: 'Good morning Founder! I am Sarah, your Lead AI Business Analyst with Google Gemini Kore voice.'",
+      contents: "Say exactly: 'Good morning Founder! I am Maya, your strategic AI business advisor with Google Gemini Sulafat voice.'",
       config: {
         responseModalities: ["AUDIO"],
         speechConfig: {

@@ -2,6 +2,7 @@ import { Modality, Type, type FunctionDeclaration, type LiveConnectConfig } from
 import type { Venture } from "@/lib/store/ventureStore";
 import type { FounderCommitment, LearningPattern } from "@/lib/store/commitmentStore";
 import type { MemoryFact } from "@/lib/db/memoryService";
+import type { AdvisorPersona } from "@/lib/config/advisorPersonas";
 
 export interface GeminiLiveContext {
   venture: Venture;
@@ -9,6 +10,7 @@ export interface GeminiLiveContext {
   learnings: LearningPattern[];
   memories: MemoryFact[];
   voiceName: string;
+  advisor: Pick<AdvisorPersona, "name" | "title" | "style" | "voiceDirection">;
 }
 
 export const GEMINI_LIVE_TOOLS: FunctionDeclaration[] = [
@@ -107,7 +109,7 @@ function summarizeCards(venture: Venture, column: keyof Venture["columns"]): str
 }
 
 export function buildGeminiLiveConfig(context: GeminiLiveContext): LiveConnectConfig {
-  const { venture, commitments, learnings, memories, voiceName } = context;
+  const { venture, commitments, learnings, memories, voiceName, advisor } = context;
   const memoryText = memories.length
     ? memories.slice(0, 12).map((item) => `[${item.category}/${item.confidence}] ${item.fact}`).join("\n")
     : "No persisted business facts yet.";
@@ -131,7 +133,7 @@ export function buildGeminiLiveConfig(context: GeminiLiveContext): LiveConnectCo
     systemInstruction: {
       role: "system",
       parts: [{
-        text: `You are Sarah Jenkins, a sharp, warm Business Analyst working with a solo founder during a live stand-up.
+        text: `You are ${advisor.name}, ${advisor.title}, working with a solo founder during a live stand-up. Your coaching mode is ${advisor.style}. ${advisor.voiceDirection}
 
 Your job is to keep the sprint focused, identify blockers, challenge work that does not support the sprint goal, create clear tickets, and hold the founder accountable to explicit commitments. Be conversational and concise: normally one to three spoken sentences. Distinguish facts from assumptions. Never say an action is complete until its tool result confirms success. After a successful tool result, acknowledge it naturally and ask the next useful stand-up question. After a failed result, explain the failure and ask for the information needed to recover.
 

@@ -14,7 +14,7 @@ async function testBearerToken() {
     },
     body: JSON.stringify({
       contents: [
-        { role: "user", parts: [{ text: "Hey Sarah, reply in one punchy, natural conversational sentence to a startup founder." }] }
+        { role: "user", parts: [{ text: "Hey Maya, reply in one punchy, natural conversational sentence to a startup founder." }] }
       ],
       generationConfig: {
         temperature: 0.8,

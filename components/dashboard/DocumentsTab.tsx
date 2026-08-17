@@ -165,7 +165,7 @@ ${cardsText}
             Knowledge Your Business Analyst Can Use
           </h1>
           <p className="text-sm text-slate-300 max-w-2xl leading-relaxed">
-            Store business plans, PRDs, customer interview notes, and research. Sarah uses this knowledge base during daily standups and sprint planning to substantiate decisions with evidence.
+            Store business plans, PRDs, customer interview notes, and research. Your selected advisor uses this knowledge base during daily stand-ups and sprint planning to substantiate decisions with evidence.
           </p>
         </div>
 
@@ -184,7 +184,7 @@ ${cardsText}
           <h2 className="text-sm font-bold text-slate-900">
             Active Knowledge & Interview Transcripts ({customDocs.length})
           </h2>
-          <span className="text-xs text-slate-500">Connected to Sarah&apos;s retrieval pipeline</span>
+          <span className="text-xs text-slate-500">Connected to the advisor retrieval pipeline</span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -252,7 +252,7 @@ ${cardsText}
       {showAddModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl p-6 sm:p-7 max-w-lg w-full shadow-2xl space-y-4 animate-in zoom-in-95">
-            <h3 className="text-base font-bold text-slate-900">Add Knowledge Document for Sarah</h3>
+            <h3 className="text-base font-bold text-slate-900">Add Knowledge Document for Your Advisor</h3>
             <form onSubmit={handleCreateDoc} className="space-y-4">
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">Document Title</label>

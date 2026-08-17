@@ -3,6 +3,7 @@ import { GoogleGenAI } from "@google/genai";
 import { auth } from "@clerk/nextjs/server";
 import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
 import { buildGeminiLiveConfig, type GeminiLiveContext } from "@/lib/agent/geminiLiveConfig";
+import { ADVISOR_PERSONAS } from "@/lib/config/advisorPersonas";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,10 +26,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const body = (await req.json()) as Partial<GeminiLiveContext>;
-    if (!body.venture || !body.voiceName) {
+    const body = (await req.json()) as Partial<GeminiLiveContext> & { advisorId?: string };
+    const advisor = ADVISOR_PERSONAS.find((item) => item.id === body.advisorId);
+    if (!body.venture || !advisor) {
       return NextResponse.json(
-        { error: "Venture context and voice are required." },
+        { error: "Venture context and a supported advisor are required." },
         { status: 400 }
       );
     }
@@ -38,7 +40,13 @@ export async function POST(req: NextRequest) {
       commitments: Array.isArray(body.commitments) ? body.commitments : [],
       learnings: Array.isArray(body.learnings) ? body.learnings : [],
       memories: Array.isArray(body.memories) ? body.memories : [],
-      voiceName: body.voiceName,
+      voiceName: advisor.voiceName,
+      advisor: {
+        name: advisor.name,
+        title: advisor.title,
+        style: advisor.style,
+        voiceDirection: advisor.voiceDirection,
+      },
     };
     const liveConfig = buildGeminiLiveConfig(context);
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
@@ -68,7 +76,7 @@ export async function POST(req: NextRequest) {
       expiresAt: expiresAt.toISOString(),
       newSessionExpiresAt: newSessionExpiresAt.toISOString(),
       model: GEMINI_CONFIG.LIVE_MODEL,
-      voice: GEMINI_CONFIG.VOICES.SARAH_PRIMARY,
+      voice: context.voiceName,
       sampleRate: GEMINI_CONFIG.AUDIO_OUTPUT_SAMPLE_RATE,
     }, {
       headers: {

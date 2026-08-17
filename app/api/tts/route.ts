@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
 import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
+import { findAdvisorByVoice } from "@/lib/config/advisorPersonas";
 
 // Convert 24kHz 1-channel 16-bit PCM buffer to standard WAV format
 function pcmToWav(pcmBuffer: Buffer, sampleRate: number = 24000, numChannels: number = 1): Buffer {
@@ -59,51 +60,41 @@ export async function POST(req: NextRequest) {
 
     const apiKey = process.env.GEMINI_API_KEY;
 
-    // Supported Google Gemini Prebuilt Neural Voices: Kore, Zephyr, Puck, Fenrir, Charon, Aoede
-    const selectedVoice = voice || "Kore";
+    const advisor = findAdvisorByVoice(typeof voice === "string" ? voice : undefined);
+    const selectedVoice = advisor.voiceName;
 
     // 1. Generate Voice using Google Gemini Speech Models via @google/genai SDK
     if (apiKey && apiKey.trim().length > 0) {
       try {
         const ai = new GoogleGenAI({ apiKey });
 
-        const response = await ai.models.generateContent({
+        const response = await ai.interactions.create({
           model: GEMINI_CONFIG.AUDIO_MODEL,
-          contents: [{ role: "user", parts: [{ text: `Say in a natural, clear voice: "${cleanText}"` }] }],
-          config: {
-            responseModalities: ["AUDIO"],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: {
-                  voiceName: selectedVoice,
-                },
-              },
-            },
+          input: `${advisor.voiceDirection}\nRead this naturally and exactly as written:\n${cleanText}`,
+          response_format: { type: "audio" },
+          generation_config: {
+            speech_config: [{ voice: selectedVoice }],
           },
         });
 
-        const candidates = response.candidates;
-        if (candidates && candidates[0]?.content?.parts) {
-          for (const part of candidates[0].content.parts) {
-            if (part.inlineData && part.inlineData.data) {
-              const mimeType = part.inlineData.mimeType || "audio/pcm;rate=24000";
-              const rawAudioBuffer = Buffer.from(part.inlineData.data, "base64");
+        const audio = response.output_audio;
+        if (audio?.data) {
+          const mimeType = audio.mime_type || "audio/l16";
+          const sampleRate = audio.sample_rate || GEMINI_CONFIG.AUDIO_OUTPUT_SAMPLE_RATE;
+          const rawAudioBuffer = Buffer.from(audio.data, "base64");
+          const isRawPcm = /pcm|l16/i.test(mimeType);
+          const returnBuffer = isRawPcm
+            ? pcmToWav(rawAudioBuffer, sampleRate)
+            : rawAudioBuffer;
+          const returnMime = isRawPcm ? "audio/wav" : mimeType;
 
-              const isRawPcm = /pcm|l16/i.test(mimeType);
-              const returnBuffer = isRawPcm
-                ? pcmToWav(rawAudioBuffer, GEMINI_CONFIG.AUDIO_OUTPUT_SAMPLE_RATE)
-                : rawAudioBuffer;
-              const returnMime = isRawPcm ? "audio/wav" : mimeType;
-
-              return new NextResponse(returnBuffer as any, {
-                headers: {
-                  "Content-Type": returnMime,
-                  "Content-Length": returnBuffer.length.toString(),
-                  "Cache-Control": "no-store, private",
-                },
-              });
-            }
-          }
+          return new NextResponse(new Uint8Array(returnBuffer), {
+            headers: {
+              "Content-Type": returnMime,
+              "Content-Length": returnBuffer.length.toString(),
+              "Cache-Control": "no-store, private",
+            },
+          });
         }
       } catch (geminiAudioErr) {
         console.warn("GoogleGenAI speech synthesis notice:", geminiAudioErr);
@@ -111,8 +102,11 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({ error: "Could not synthesize audio via Gemini" }, { status: 500 });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error("TTS Route Error:", err);
-    return NextResponse.json({ error: err.message || "TTS Error" }, { status: 500 });
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "TTS Error" },
+      { status: 500 }
+    );
   }
 }

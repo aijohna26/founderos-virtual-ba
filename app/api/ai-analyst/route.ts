@@ -163,7 +163,7 @@ const recordLearningTool: FunctionDeclaration = {
       },
       suggestedCoachingBehavior: {
         type: Type.STRING,
-        description: "How Sarah should adapt future coaching advice",
+        description: "How the advisor should adapt future coaching advice",
       },
     },
     required: ["pattern"],
@@ -197,7 +197,7 @@ export async function POST(req: NextRequest) {
     const doneCards = getColItems(venture?.columns?.done);
     const blockedCards = getColItems(venture?.columns?.blocked);
 
-    const systemInstruction = `You are Sarah Jenkins, the Lead AI Business Analyst and startup co-pilot for "${venture?.name || "the startup"}".
+    const systemInstruction = `You are FounderAlly's Lead AI Business Advisor and startup co-pilot for "${venture?.name || "the startup"}".
 
 ROLE & POSITIONING:
 - You work ALONGSIDE the founder. You run morning stand-ups, audit sprint progress, challenge distractions, and hold the founder accountable to their sprint goal.

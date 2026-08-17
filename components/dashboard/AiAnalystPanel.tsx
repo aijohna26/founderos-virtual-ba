@@ -20,12 +20,15 @@ import {
   Clock,
   Calendar,
   Radio,
-  Trash2
+  Trash2,
+  ChevronDown,
+  Check
 } from "lucide-react";
 import { Venture, VentureStore, ChatMessage } from "@/lib/store/ventureStore";
 import { VoiceEngine, VoiceState } from "@/lib/voice/voiceEngine";
 import { MemoryService, MemoryFact } from "@/lib/db/memoryService";
 import { BAAgentService, type ToolExecutionResult } from "@/lib/agent/baAgentService";
+import { ADVISOR_PERSONAS, findAdvisorById, type AdvisorPersona } from "@/lib/config/advisorPersonas";
 
 export interface AiAnalystPanelProps {
   isDailyCallActive: boolean;
@@ -46,6 +49,7 @@ export function AiAnalystPanel({
   onMobileClose,
   onMobileOpen,
 }: AiAnalystPanelProps) {
+  const advisor = findAdvisorById(venture.advisorId);
   const [micMuted, setMicMuted] = useState(false);
   const [voiceAudioEnabled, setVoiceAudioEnabled] = useState(true);
   const [callDuration, setCallDuration] = useState(0);
@@ -55,6 +59,7 @@ export function AiAnalystPanel({
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [showMemoryModal, setShowMemoryModal] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [showAdvisorPicker, setShowAdvisorPicker] = useState(false);
   const [scheduledTime, setScheduledTime] = useState(venture?.standupTime || "09:00 AM");
   const [memories, setMemories] = useState<MemoryFact[]>([]);
   const chatBottomRef = useRef<HTMLDivElement>(null);
@@ -68,6 +73,15 @@ export function AiAnalystPanel({
       timestamp: "09:00 AM",
     },
   ];
+
+  const selectAdvisor = (nextAdvisor: AdvisorPersona) => {
+    VoiceEngine.stopSpeaking();
+    setIsSpeakingAI(false);
+    const updatedVenture: Venture = { ...venture, advisorId: nextAdvisor.id };
+    VentureStore.updateVenture(updatedVenture);
+    onUpdateVenture(updatedVenture);
+    setShowAdvisorPicker(false);
+  };
 
   // Sync standup schedule time when switching projects
   useEffect(() => {
@@ -297,6 +311,7 @@ export function AiAnalystPanel({
       if (voiceAudioEnabled) {
         VoiceEngine.speak(
           confirmedReplyText,
+          advisor.voiceName,
           () => setIsSpeakingAI(true),
           () => setIsSpeakingAI(false)
         );
@@ -360,6 +375,7 @@ export function AiAnalystPanel({
 
       VoiceEngine.speak(
         greeting,
+        advisor.voiceName,
         () => setIsSpeakingAI(true),
         () => setIsSpeakingAI(false)
       );
@@ -393,8 +409,8 @@ export function AiAnalystPanel({
       >
         <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-white shadow-md relative shrink-0">
           <Image
-            src="/avatar-ai-ba.jpg"
-            alt="AI BA"
+            src={advisor.avatar}
+            alt={`${advisor.name}, AI business advisor`}
             width={40}
             height={40}
             className="w-full h-full object-cover"
@@ -418,7 +434,7 @@ export function AiAnalystPanel({
   }
 
   const panelContent = (
-    <div className="flex flex-col justify-between h-full w-full bg-white select-none">
+    <div className="relative flex flex-col justify-between h-full w-full bg-white select-none">
       {/* 1. Header */}
       <div className="p-3 border-b border-slate-100 flex items-center justify-between">
         <div>
@@ -497,6 +513,61 @@ export function AiAnalystPanel({
         </div>
       </div>
 
+      {showAdvisorPicker && (
+        <div className="absolute left-3 right-3 top-[4.25rem] z-50 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-900/20 animate-in fade-in slide-in-from-top-2 duration-150">
+          <div className="flex items-start justify-between border-b border-slate-100 bg-slate-50/80 px-3.5 py-3">
+            <div>
+              <p className="text-xs font-black text-slate-900">Choose BA for {venture.name}</p>
+              <p className="mt-0.5 text-[10px] text-slate-500">Saved only to this project</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowAdvisorPicker(false)}
+              className="rounded-lg p-1 text-slate-400 transition-colors hover:bg-slate-200 hover:text-slate-700"
+              aria-label="Close advisor picker"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          <div className="space-y-1.5 p-2">
+            {ADVISOR_PERSONAS.map((candidate) => {
+              const isSelected = candidate.id === advisor.id;
+              return (
+                <button
+                  type="button"
+                  key={candidate.id}
+                  onClick={() => selectAdvisor(candidate)}
+                  className={`flex w-full items-center gap-2.5 rounded-xl border p-2.5 text-left transition-all ${
+                    isSelected
+                      ? "border-blue-300 bg-blue-50 shadow-sm"
+                      : "border-transparent hover:border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  <Image
+                    src={candidate.avatar}
+                    alt=""
+                    width={40}
+                    height={40}
+                    className="h-10 w-10 shrink-0 rounded-full object-cover ring-1 ring-slate-200"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-center gap-1.5 text-[11px] font-extrabold text-slate-900">
+                      {candidate.name}
+                      {isSelected && <Check className="h-3.5 w-3.5 text-blue-600" />}
+                    </span>
+                    <span className="block truncate text-[10px] text-slate-500">{candidate.title}</span>
+                    <span className="mt-0.5 block text-[9px] font-semibold text-blue-600">
+                      Gemini {candidate.voiceName} · {candidate.voiceCharacter}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* 2. Top Voice / Daily Call Section */}
       <div className="p-3 border-b border-slate-100 bg-gradient-to-b from-blue-50/30 to-white flex flex-col items-center">
         {/* Waveform and Avatar Container */}
@@ -531,8 +602,8 @@ export function AiAnalystPanel({
             >
               <div className="w-full h-full rounded-full overflow-hidden relative border-2 border-white shadow-inner bg-slate-100">
                 <Image
-                  src="/avatar-ai-ba.jpg"
-                  alt="AI Business Analyst"
+                  src={advisor.avatar}
+                  alt={`${advisor.name}, AI business advisor`}
                   width={56}
                   height={56}
                   className="w-full h-full object-cover object-center"
@@ -570,6 +641,18 @@ export function AiAnalystPanel({
             />
           </div>
         </div>
+
+        <button
+          type="button"
+          onClick={() => setShowAdvisorPicker(true)}
+          disabled={isDailyCallActive}
+          className="group mt-1 inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-700 shadow-sm transition-all hover:border-blue-400 hover:text-blue-700 hover:shadow disabled:cursor-not-allowed disabled:opacity-60"
+          title={isDailyCallActive ? "End the daily call before changing BA" : `Change BA for ${venture.name}`}
+        >
+          <span>{advisor.name}</span>
+          <span className="text-blue-600">Change BA</span>
+          <ChevronDown className="h-3 w-3 text-slate-400 transition-transform group-hover:translate-y-0.5" />
+        </button>
 
         {/* Call Status & Standup Schedule */}
         <div className="text-center mt-1 mb-2">
@@ -648,6 +731,7 @@ export function AiAnalystPanel({
               if (lastAiMsg) {
                 VoiceEngine.speak(
                   lastAiMsg.text,
+                  advisor.voiceName,
                   () => setIsSpeakingAI(true),
                   () => setIsSpeakingAI(false)
                 );
@@ -658,7 +742,7 @@ export function AiAnalystPanel({
                 ? "bg-rose-600 hover:bg-rose-700 text-white ring-2 ring-rose-300 animate-pulse"
                 : "bg-slate-100 text-slate-700 hover:bg-slate-200"
             }`}
-            title={isSpeakingAI ? "Click to interrupt Sarah" : "Speak latest message aloud"}
+            title={isSpeakingAI ? "Click to interrupt the advisor" : "Speak latest message aloud"}
           >
             {isSpeakingAI ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
           </button>
@@ -702,6 +786,7 @@ export function AiAnalystPanel({
                     onClick={() => {
                       VoiceEngine.speak(
                         msg.text,
+                        advisor.voiceName,
                         () => setIsSpeakingAI(true),
                         () => setIsSpeakingAI(false)
                       );

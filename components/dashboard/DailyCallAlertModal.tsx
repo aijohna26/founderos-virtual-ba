@@ -13,18 +13,22 @@ import {
   ArrowRight
 } from "lucide-react";
 import { playAlertChime } from "@/lib/utils/soundAlert";
+import { findAdvisorById } from "@/lib/config/advisorPersonas";
 
 export interface DailyCallAlertModalProps {
   isDailyCallActive: boolean;
   onJoinCall: () => void;
   ventureName: string;
+  advisorId?: string;
 }
 
 export function DailyCallAlertModal({
   isDailyCallActive,
   onJoinCall,
   ventureName,
+  advisorId,
 }: DailyCallAlertModalProps) {
+  const advisor = findAdvisorById(advisorId);
   const [scheduledTime, setScheduledTime] = useState<string>("09:00");
   const [activeAlertMinutes, setActiveAlertMinutes] = useState<number | null>(null);
   const [snoozedUntil, setSnoozedUntil] = useState<number | null>(null);
@@ -151,8 +155,8 @@ export function DailyCallAlertModal({
             <div className="flex items-center gap-3 p-3 rounded-2xl bg-slate-50 border border-slate-200/80">
               <div className="w-10 h-10 rounded-full overflow-hidden shrink-0 border border-slate-200">
                 <Image
-                  src="/avatar-ai-ba.jpg"
-                  alt="AI BA"
+                  src={advisor.avatar}
+                  alt={`${advisor.name}, AI business advisor`}
                   width={40}
                   height={40}
                   className="w-full h-full object-cover"

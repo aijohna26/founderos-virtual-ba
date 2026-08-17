@@ -16,11 +16,9 @@ export const GEMINI_CONFIG = {
 
   // Supported Prebuilt Gemini Neural Voices
   VOICES: {
-    SARAH_PRIMARY: "Kore", // Dynamic, analytical, agile sprint BA
-    SARAH_FORMAL: "Aoede", // Crisp, executive, structured
-    VENTURE_STRATEGY: "Zephyr", // Articulate & strategic
-    EXECUTIVE_COACHING: "Puck", // Empathetic & collaborative
-    AUTHORITATIVE_AUDIT: "Fenrir", // Deep & firm
+    DEFAULT_ADVISOR: "Sulafat", // Warm strategic co-founder
+    SPRINT_COACH: "Charon", // Informative operations lead
+    REQUIREMENTS_ARCHITECT: "Iapetus", // Clear technical BA
   },
 
   // Audio parameters matching Google Live specification

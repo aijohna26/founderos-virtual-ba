@@ -2,7 +2,7 @@
 
 > **You may be building solo, but you have an AI Business Analyst who understands the work, challenges your assumptions, remembers what you committed to, and turns up every morning.**
 
-FounderAlly transforms startup building by pairing solo founders with **Sarah Jenkins**, a Lead AI Business Analyst powered by **Google Gemini Live**, native tool execution, and adaptive sprint memory.
+FounderAlly pairs solo founders with a selectable team of AI business advisors powered by **Google Gemini Live**, native tool execution, and adaptive sprint memory.
 
 ---
 
@@ -97,6 +97,8 @@ Do not define or use `NEXT_PUBLIC_GEMINI_API_KEY`. The permanent Gemini credenti
 
 Model configuration is centralized in `lib/config/geminiConfig.ts`. Live audio uses `gemini-3.1-flash-live-preview`. Text requests try `gemini-3.7-flash`, `gemini-flash-latest`, then `gemini-3.1-flash-lite`. TTS fallback uses the dedicated `gemini-3.1-flash-tts-preview` model; text-only Flash models cannot replace a Live or TTS model.
 
+Advisor identity and voice configuration lives in `lib/config/advisorPersonas.ts`. Maya Chen uses Gemini Sulafat (warm), Marcus Reed uses Charon (informative), and Priya Nair uses Iapetus (clear). Each venture persists its own advisor selection, and that project-specific identity, portrait, voice, and speaking direction are applied to both Gemini Live and server-generated TTS fallback audio.
+
 ### 3. Run Development Server
 ```bash
 npm run dev
@@ -110,11 +112,11 @@ Open [http://localhost:3000](http://localhost:3000) to access the dashboard.
 1. Open **`http://localhost:3000/dashboard`** and click the **Stand-up** tab.
 2. Click **"Connect Live Voice Standup"**.
 3. **Founder**: *"I spent yesterday polishing the dashboard animations."*
-4. **Sarah**: Challenges the distraction against the sprint goal (*"Our sprint goal is customer validation. Dashboard animations aren't helping us reach it right now. I recommend moving that ticket back to the backlog."*)
+4. **Advisor**: Challenges the distraction against the sprint goal (*"Our sprint goal is customer validation. Dashboard animations aren't helping us reach it right now. I recommend moving that ticket back to the backlog."*)
 5. **Founder**: *"Yeah, do it."*
-6. **Sarah**: Calls `move_ticket`. FounderAlly changes the board and sends the authoritative result back through `session.sendToolResponse(...)`; only then should Sarah confirm the move and continue.
+6. **Advisor**: Calls `move_ticket`. FounderAlly changes the board and sends the authoritative result back through `session.sendToolResponse(...)`; only then should the advisor confirm the move and continue.
 7. **Founder**: *"I'll contact all six."*
-8. **Sarah**: Calls `record_commitment` and records it for tomorrow's stand-up.
+8. **Advisor**: Calls `record_commitment` and records it for tomorrow's stand-up.
 
 ---
 

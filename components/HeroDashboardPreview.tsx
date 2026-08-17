@@ -290,8 +290,8 @@ export function HeroDashboardPreview() {
                 <div className="w-14 h-14 rounded-full p-0.5 bg-gradient-to-tr from-blue-600 via-indigo-500 to-purple-500 shadow-md">
                   <div className="w-full h-full rounded-full overflow-hidden border-2 border-white bg-slate-100">
                     <Image
-                      src="/avatar-ai-ba.jpg"
-                      alt="AI BA Sarah"
+                      src="/advisors/maya-chen-front.png"
+                      alt="Maya Chen, AI business advisor"
                       width={56}
                       height={56}
                       className="w-full h-full object-cover"
@@ -327,7 +327,7 @@ export function HeroDashboardPreview() {
             {/* Spoken AI Message Bubble */}
             <div className="p-2.5 rounded-2xl bg-blue-50/90 border border-blue-200/70 text-[10px] text-slate-800 space-y-1 leading-relaxed">
               <div className="flex items-center justify-between text-[9px] font-bold text-blue-700 uppercase">
-                <span>Sarah (AI BA)</span>
+                <span>Maya (AI BA)</span>
                 <span className="text-[8px] text-slate-400">09:00 AM</span>
               </div>
               <p className="font-medium">

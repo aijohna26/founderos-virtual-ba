@@ -58,7 +58,7 @@ export function HelpSupportModal({ isOpen, onClose }: HelpSupportModalProps) {
               <span>Can&apos;t hear the AI Agent? (Audio Troubleshooting)</span>
             </div>
             <p className="text-[11px] text-amber-900/90 leading-relaxed">
-              If you&apos;re speaking to Sarah and cannot hear her voice output, <strong>please restart your browser</strong> or refresh the tab. Browsers (especially Chrome and Safari) can occasionally suspend background Web Speech audio queues until the browser is restarted. Also verify that your tab and system volume are unmuted.
+              If you cannot hear your advisor&apos;s voice output, <strong>please restart your browser</strong> or refresh the tab. Browsers (especially Chrome and Safari) can occasionally suspend background audio until the browser is restarted. Also verify that your tab and system volume are unmuted.
             </p>
           </div>
 

@@ -194,6 +194,7 @@ export default function DashboardPage() {
           setActiveTab("Board");
         }}
         ventureName={activeVenture.name}
+        advisorId={activeVenture.advisorId}
       />
 
       {/* 6. Settings Modal */}

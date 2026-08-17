@@ -2,28 +2,21 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import {
-  PhoneCall,
   Clock,
   CheckCircle2,
   AlertOctagon,
   Sparkles,
   ArrowRight,
-  Flame,
-  Calendar,
   Layers,
-  Check,
-  Plus,
-  Play,
-  RotateCcw,
   Activity
 } from "lucide-react";
 import { Venture, VentureStore, KanbanCard } from "@/lib/store/ventureStore";
-import { VoiceSphereVisualizer, SARAH_PERSONAS, BusinessPersona, AgentAudioState } from "@/components/dashboard/VoiceSphereVisualizer";
+import { VoiceSphereVisualizer, type BusinessPersona, type AgentAudioState } from "@/components/dashboard/VoiceSphereVisualizer";
+import { findAdvisorById } from "@/lib/config/advisorPersonas";
 import { GeminiLiveService, LiveSessionState } from "@/lib/agent/geminiLiveService";
 import { StandupPrepEngine } from "@/lib/agent/standupPrepEngine";
 import { CommitmentStore } from "@/lib/store/commitmentStore";
 import { VoiceEngine } from "@/lib/voice/voiceEngine";
-import { AIOperationsLogger } from "@/lib/agent/aiOperationsLog";
 
 export interface StandupTabProps {
   venture: Venture;
@@ -40,16 +33,17 @@ export function StandupTab({
   setIsDailyCallActive,
   setActiveTab,
 }: StandupTabProps) {
-  const [selectedPersona, setSelectedPersona] = useState<BusinessPersona>(SARAH_PERSONAS[0]);
+  const selectedPersona = findAdvisorById(venture.advisorId);
   const [sessionState, setSessionState] = useState<LiveSessionState>("idle");
   const [isMuted, setIsMuted] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
   const [activeToolNotice, setActiveToolNotice] = useState<string | null>(null);
+  const [audioAnalyser, setAudioAnalyser] = useState<AnalyserNode | null>(null);
 
   const liveClientRef = useRef<GeminiLiveService | null>(null);
   const fallbackActiveRef = useRef(false);
 
-  const getColItems = (col: any): KanbanCard[] => {
+  const getColItems = (col: { items?: KanbanCard[] } | KanbanCard[] | undefined): KanbanCard[] => {
     if (!col) return [];
     if (Array.isArray(col)) return col;
     if (Array.isArray(col.items)) return col.items;
@@ -60,11 +54,16 @@ export function StandupTab({
   const inProgressCards = getColItems(venture?.columns?.in_progress);
   const todayCards = getColItems(venture?.columns?.today);
   const blockedCards = getColItems(venture?.columns?.blocked);
-  const backlogCards = getColItems(venture?.columns?.backlog);
   const totalActive = inProgressCards.length + todayCards.length;
 
   const commitments = CommitmentStore.getOutstandingCommitments(venture.id);
   const learnings = CommitmentStore.getLearnings(venture.id);
+
+  const handleSelectPersona = (persona: BusinessPersona) => {
+    const updatedVenture: Venture = { ...venture, advisorId: persona.id };
+    VentureStore.updateVenture(updatedVenture);
+    onUpdateVenture(updatedVenture);
+  };
 
   // Cleanup on unmount
   useEffect(() => {
@@ -88,6 +87,7 @@ export function StandupTab({
       setSessionState("idle");
       setInterimTranscript("");
       setActiveToolNotice(null);
+      setAudioAnalyser(null);
       fallbackActiveRef.current = false;
       return;
     }
@@ -103,17 +103,17 @@ export function StandupTab({
         onStateChange: (st) => {
           setSessionState(st);
         },
-        onTranscript: (sender, text, isFinal) => {
+        onTranscript: (sender, text) => {
           if (sender === "user") {
             setInterimTranscript(text);
           } else if (sender === "ai" && text) {
             setInterimTranscript("");
           }
         },
-        onToolExecuting: (toolName, args) => {
-          setActiveToolNotice(`Sarah is executing: ${toolName}...`);
+        onToolExecuting: (toolName) => {
+          setActiveToolNotice(`${selectedPersona.name} is executing: ${toolName}...`);
         },
-        onToolExecuted: (toolName, res) => {
+        onToolExecuted: () => {
           setActiveToolNotice(null);
         },
         onVentureUpdated: (updatedV) => {
@@ -126,11 +126,12 @@ export function StandupTab({
           handleFallbackGreeting();
         },
       },
-      selectedPersona.voiceName.includes("Kore") ? "Kore" : "Aoede"
+      selectedPersona
     );
 
     liveClientRef.current = client;
     await client.connect();
+    setAudioAnalyser(client.getAudioAnalyser());
   };
 
   const handleFallbackGreeting = () => {
@@ -142,8 +143,11 @@ export function StandupTab({
 
     VoiceEngine.speak(
       agenda.greeting,
-      "Kore",
-      () => setSessionState("speaking"),
+      selectedPersona.voiceName,
+      () => {
+        setSessionState("speaking");
+        setAudioAnalyser(VoiceEngine.getAudioAnalyser());
+      },
       () => {
         setSessionState("listening");
         VoiceEngine.startListening();
@@ -163,9 +167,12 @@ export function StandupTab({
     VoiceEngine.unlockAudio();
     setSessionState("speaking");
     VoiceEngine.speak(
-      `Hello! I'm Sarah Jenkins, your Lead AI Business Analyst powered by Google Gemini Live. I'm connected and ready for our daily standup.`,
-      "Kore",
-      () => setSessionState("speaking"),
+      `Hello! I'm ${selectedPersona.name}, your ${selectedPersona.title}. My Gemini ${selectedPersona.voiceName} voice is ready for our daily stand-up.`,
+      selectedPersona.voiceName,
+      () => {
+        setSessionState("speaking");
+        setAudioAnalyser(VoiceEngine.getAudioAnalyser());
+      },
       () => setSessionState("idle")
     );
   };
@@ -192,7 +199,7 @@ export function StandupTab({
       {/* 1. Interactive Voice Sphere Visualizer & Strict Persona Workspace */}
       <VoiceSphereVisualizer
         persona={selectedPersona}
-        onSelectPersona={setSelectedPersona}
+        onSelectPersona={handleSelectPersona}
         state={visualizerAudioState}
         isCallActive={isDailyCallActive}
         isMuted={isMuted}
@@ -200,7 +207,7 @@ export function StandupTab({
         onInterrupt={handleInterrupt}
         onStartCall={handleStartCall}
         onTestVoice={handleTestVoice}
-        audioAnalyser={liveClientRef.current?.getAudioAnalyser() || VoiceEngine.getAudioAnalyser()}
+        audioAnalyser={audioAnalyser}
         interimTranscript={interimTranscript}
       />
 
@@ -269,7 +276,7 @@ export function StandupTab({
             </div>
             {todayCards.length === 0 && inProgressCards.length === 0 ? (
               <p className="text-xs text-slate-400 italic py-4 text-center">
-                Nothing queued for today. Tell Sarah during standup to assign today&apos;s tasks.
+                Nothing queued for today. Ask your advisor during stand-up to assign today&apos;s tasks.
               </p>
             ) : (
               <div className="space-y-2">
@@ -360,7 +367,7 @@ export function StandupTab({
           </div>
           {commitments.length === 0 ? (
             <p className="text-xs text-slate-400 italic py-2">
-              No outstanding commitments. Make a commitment to Sarah during standup!
+              No outstanding commitments. Make a commitment to your advisor during stand-up!
             </p>
           ) : (
             <div className="space-y-2">
@@ -394,7 +401,7 @@ export function StandupTab({
           </div>
           {learnings.length === 0 ? (
             <p className="text-xs text-slate-400 italic py-2">
-              Sarah is observing sprint delivery patterns to personalize future coaching.
+              Your advisor is observing sprint delivery patterns to personalize future coaching.
             </p>
           ) : (
             <div className="space-y-2">

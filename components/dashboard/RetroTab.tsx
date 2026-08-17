@@ -177,7 +177,7 @@ export function RetroTab({ venture, onUpdateVenture, setActiveTab }: RetroTabPro
         </div>
       </div>
 
-      {/* 3. Log a Sprint Learning for Sarah's Knowledge Base */}
+      {/* 3. Log a Sprint Learning for the advisor knowledge base */}
       <div className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-xs space-y-4">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
@@ -188,7 +188,7 @@ export function RetroTab({ venture, onUpdateVenture, setActiveTab }: RetroTabPro
               Record a Sprint Retrospective Learning
             </h3>
             <p className="text-xs text-slate-500">
-              Teach Sarah key insights from this sprint (e.g. pricing feedback, development bottlenecks) so she factors them into future standups.
+              Teach your advisor key insights from this sprint (e.g. pricing feedback, development bottlenecks) so they factor them into future stand-ups.
             </p>
           </div>
         </div>
@@ -214,7 +214,7 @@ export function RetroTab({ venture, onUpdateVenture, setActiveTab }: RetroTabPro
         {addedSuccess && (
           <div className="p-3 rounded-xl bg-emerald-50 text-emerald-800 border border-emerald-200 text-xs font-bold flex items-center gap-2 animate-in fade-in">
             <Check className="w-4 h-4 text-emerald-600" />
-            <span>Retrospective learning saved into Sarah&apos;s active memory!</span>
+            <span>Retrospective learning saved into your advisor&apos;s active memory!</span>
           </div>
         )}
       </div>

@@ -1,5 +1,7 @@
 "use client";
 
+import { DEFAULT_ADVISOR } from "@/lib/config/advisorPersonas";
+
 export type VoiceState = "idle" | "listening" | "thinking" | "speaking" | "paused";
 
 export class VoiceEngine {
@@ -227,14 +229,14 @@ export class VoiceEngine {
     }
   }
 
-  // High-Definition Neural Voice Playback (Gemini Voice: Kore / Aoede)
+  // Server-generated Gemini neural voice playback for the selected advisor.
   static async speak(
     text: string,
     voiceOrOnStart?: string | (() => void),
     onStartOrOnEnd?: () => void,
     onEndCallback?: () => void
   ): Promise<void> {
-    let voiceName = "Kore";
+    let voiceName: string = DEFAULT_ADVISOR.voiceName;
     let onStart: (() => void) | undefined = undefined;
     let onEnd: (() => void) | undefined = undefined;
 
@@ -272,7 +274,7 @@ export class VoiceEngine {
       this.isListening = false;
     }
 
-    // 1. Server-Side Google Gemini Neural Voice Stream (Kore / Zephyr / Aoede)
+    // 1. Server-side Google Gemini neural voice audio.
     try {
       const res = await fetch("/api/tts", {
         method: "POST",

@@ -58,7 +58,7 @@ function onUserAudioDetected(transcript) {
   }
 }
 
-onUserAudioDetected("Wait, hold on Sarah, what about our pricing?");
+onUserAudioDetected("Wait, hold on Maya, what about our pricing?");
 assert.strictEqual(isSpeaking, false, "Error: AI should have stopped speaking on user interruption");
 assert.strictEqual(aiPlaybackStopped, true, "Error: AI playback stop was not triggered");
 console.log("✅ [TEST 2] Voice Barge-In verified: AI immediately stops speaking when interrupted.");

@@ -8,6 +8,7 @@ import { CommitmentStore } from "@/lib/store/commitmentStore";
 import { MemoryService } from "@/lib/db/memoryService";
 import { buildGeminiLiveConfig } from "@/lib/agent/geminiLiveConfig";
 import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
+import { DEFAULT_ADVISOR, type AdvisorPersona } from "@/lib/config/advisorPersonas";
 
 export type LiveSessionState =
   | "idle"
@@ -54,16 +55,16 @@ export class GeminiLiveService {
   private readonly callbacks: GeminiLiveServiceCallbacks;
   private nextPlayTime = 0;
   private audioQueue: AudioBufferSourceNode[] = [];
-  private readonly voiceName: string;
+  private readonly advisor: AdvisorPersona;
 
   constructor(
     venture: Venture,
     callbacks: GeminiLiveServiceCallbacks,
-    voiceName: string = GEMINI_CONFIG.VOICES.SARAH_PRIMARY
+    advisor: AdvisorPersona = DEFAULT_ADVISOR
   ) {
     this.venture = venture;
     this.callbacks = callbacks;
-    this.voiceName = voiceName;
+    this.advisor = advisor;
   }
 
   getAudioAnalyser(): AnalyserNode | null {
@@ -82,13 +83,25 @@ export class GeminiLiveService {
         commitments: CommitmentStore.getOutstandingCommitments(this.venture.id),
         learnings: CommitmentStore.getLearnings(this.venture.id),
         memories: MemoryService.getMemories(this.venture.id),
-        voiceName: this.voiceName,
+        voiceName: this.advisor.voiceName,
+        advisor: {
+          name: this.advisor.name,
+          title: this.advisor.title,
+          style: this.advisor.style,
+          voiceDirection: this.advisor.voiceDirection,
+        },
       };
       const authRes = await fetch("/api/live-session", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
-        body: JSON.stringify(context),
+        body: JSON.stringify({
+          venture: context.venture,
+          commitments: context.commitments,
+          learnings: context.learnings,
+          memories: context.memories,
+          advisorId: this.advisor.id,
+        }),
       });
       const auth = (await authRes.json()) as LiveSessionAuthorization & { error?: string };
       if (!authRes.ok || !auth.token) {
@@ -136,7 +149,7 @@ export class GeminiLiveService {
         ceremony: "daily_standup",
         geminiModel: auth.model,
         toolRequested: "live_session_start",
-        toolArguments: { voice: this.voiceName, auth: "ephemeral_token" },
+        toolArguments: { advisor: this.advisor.name, voice: this.advisor.voiceName, auth: "ephemeral_token" },
         toolResult: { status: "connected", expiresAt: auth.expiresAt },
         reasoningCategory: "accountability",
         latencyMs: Math.max(1, Math.round(performance.now() - this.connectStartedAt)),
@@ -278,7 +291,7 @@ export class GeminiLiveService {
       });
 
       // Synchronous Live tools pause model generation until this response is
-      // returned, so Sarah continues in this exact conversation with the
+      // returned, so the selected advisor continues in this exact conversation with the
       // authoritative success/failure result.
       this.session?.sendToolResponse({ functionResponses });
     }
