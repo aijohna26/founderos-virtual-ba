@@ -84,6 +84,11 @@ export class GeminiLiveService {
     this.fallbackSignaled = false;
 
     try {
+      await Promise.all([
+        CommitmentStore.hydrate(this.venture.id),
+        MemoryService.hydrate(this.venture.id),
+        AIOperationsLogger.hydrate(this.venture.id),
+      ]);
       const context = {
         venture: this.venture,
         commitments: CommitmentStore.getOutstandingCommitments(this.venture.id),

@@ -52,15 +52,16 @@ flowchart TD
 4. `update_ticket` — Refines acceptance criteria, updates descriptions, or flags blockers.
 5. `move_ticket` — Moves tickets between columns (`backlog`, `today`, `in_progress`, `done`, `blocked`) and returns verified results.
 6. `record_commitment` — Records explicit founder commitments for morning accountability.
-7. `record_learning` — Stores durable retrospective learnings and recurring behavioral patterns.
+7. `record_learning` — Stores authenticated, venture-scoped retrospective learnings and recurring behavioral patterns when database persistence is configured.
 
 ### 3. Proactive Stand-up Preparation (`StandupPrepEngine`)
 - Analyzes active tickets, carried-over work, unfulfilled commitments, and sprint goal alignment before stand-up begins.
 - Opens stand-ups with substantive, goal-oriented observations rather than generic greetings.
 
 ### 4. Adaptation & Behavioral Coaching
-- Persists explicit learnings and founder commitments in browser storage.
-- Injects those persisted facts and learnings into later Live-session instructions so they influence future coaching.
+- Persists explicit learnings, founder commitments, memory facts, and AI Ops executions through authenticated server routes scoped to the Clerk user and venture.
+- Keeps a user-scoped browser cache for offline/demo resilience and injects hydrated facts and learnings into later Live-session instructions.
+- Detects coaching patterns only from completed sprint history; the production store no longer seeds fictional "observed" behavior.
 
 ### 5. Auditable AI Operations & Telemetry
 - Inspect live tool executions, latency benchmarks, success rates, and Gemini models via the **AI Ops** telemetry dashboard.
@@ -84,9 +85,10 @@ GEMINI_API_KEY=AIzaSyYourGoogleApiKeyHere
 NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
 CLERK_SECRET_KEY=sk_test_...
 
-# Supabase (Optional Database Persistence)
+# Supabase (required for cross-device durable persistence)
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
+SUPABASE_SECRET_KEY=sb_secret_... # server-only; never prefix with NEXT_PUBLIC_
 
 # Feature Flag: Refocused AI Business Analyst Experience
 SHOW_ADVANCED_FEATURES=false
@@ -126,4 +128,4 @@ Open [http://localhost:3000](http://localhost:3000) to access the dashboard.
 
 ## Persistence and current scope
 
-Venture state, commitments, learnings, and AI Ops events currently persist in browser `localStorage`; memory facts optionally mirror to Supabase. They survive refresh in the same browser profile but are not yet guaranteed to synchronize across devices. Documents remain in the primary navigation. Strategy, Assumptions, Requirements, Experiments, Metrics, and Roadmap remain behind `SHOW_ADVANCED_FEATURES`.
+Commitments, learnings, memory facts, and AI Ops events persist in Supabase through Clerk-authenticated, venture-scoped server routes after applying `supabase/migrations/20260817120000_durable_founder_memory.sql` and configuring the modern `SUPABASE_SECRET_KEY` (`sb_secret_...`). A user-scoped browser cache preserves the demo when the database is temporarily unavailable. Venture board/chat state remains browser-backed. Documents remain in the primary navigation. Strategy, Assumptions, Requirements, Experiments, Metrics, and Roadmap remain behind `SHOW_ADVANCED_FEATURES`.

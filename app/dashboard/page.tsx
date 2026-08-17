@@ -24,8 +24,15 @@ import { HelpSupportModal } from "@/components/dashboard/HelpSupportModal";
 import { VentureStore, Venture } from "@/lib/store/ventureStore";
 import { SHOW_ADVANCED_FEATURES } from "@/lib/config/featureFlags";
 import { VoiceEngine } from "@/lib/voice/voiceEngine";
+import { CommitmentStore } from "@/lib/store/commitmentStore";
+import { MemoryService } from "@/lib/db/memoryService";
+import { AIOperationsLogger } from "@/lib/agent/aiOperationsLog";
+import { PersistenceClient } from "@/lib/store/persistenceClient";
+import { useAuth } from "@clerk/nextjs";
 
 export default function DashboardPage() {
+  const { userId, isLoaded: isAuthLoaded } = useAuth();
+  PersistenceClient.setUserScope(userId);
   const [activeTab, setActiveTab] = useState<string>("Today");
   const [ventures, setVentures] = useState<Venture[]>([]);
   const [activeVentureId, setActiveVentureId] = useState<string>("founderally");
@@ -50,6 +57,21 @@ export default function DashboardPage() {
     ventures.find((v) => v.id === activeVentureId) ||
     ventures[0] ||
     VentureStore.getVentures()[0];
+
+  useEffect(() => {
+    if (!mounted || !isAuthLoaded || !activeVenture?.id) return;
+    let active = true;
+    void Promise.all([
+      CommitmentStore.hydrate(activeVenture.id),
+      MemoryService.hydrate(activeVenture.id),
+      AIOperationsLogger.hydrate(activeVenture.id),
+    ]).then(() => {
+      if (active) CommitmentStore.detectFromSprintHistory(activeVenture.id, activeVenture.sprintHistory);
+    });
+    return () => {
+      active = false;
+    };
+  }, [mounted, isAuthLoaded, userId, activeVenture?.id, activeVenture?.sprintHistory]);
 
   const handleUpdateVenture = (updated: Venture) => {
     setVentures((prev) =>
@@ -192,6 +214,7 @@ export default function DashboardPage() {
         onMobileClose={() => setMobileAiPanelOpen(false)}
         onMobileOpen={() => setMobileAiPanelOpen(true)}
         voiceControlsManagedExternally={effectiveTab === "Standup"}
+        activeWorkspace={effectiveTab}
       />
 
       {/* 4. Create New Venture Modal */}

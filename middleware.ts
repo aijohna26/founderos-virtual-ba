@@ -7,6 +7,8 @@ const isPublicRoute = createRouteMatcher([
   "/sign-up(.*)",
   "/api/ai-analyst(.*)",
   "/api/generate-venture-analysis(.*)",
+  // This route performs its own Clerk auth so unsigned API callers receive JSON 401.
+  "/api/persistence(.*)",
 ]);
 
 export default clerkMiddleware(async (auth, req) => {

@@ -11,13 +11,21 @@ interface AIOperationsModalProps {
   ventureId?: string;
 }
 
+interface AIOperationsSummary {
+  totalCalls: number;
+  successfulCalls: number;
+  successRate: number;
+  avgLatency: number;
+  toolUsageCounts: Record<string, number>;
+}
+
 export const AIOperationsModal: React.FC<AIOperationsModalProps> = ({
   isOpen,
   onClose,
   ventureId,
 }) => {
   const [logs, setLogs] = useState<AIOperationEntry[]>([]);
-  const [stats, setStats] = useState<any>({
+  const [stats, setStats] = useState<AIOperationsSummary>({
     totalCalls: 0,
     successfulCalls: 0,
     successRate: 100,
@@ -27,10 +35,12 @@ export const AIOperationsModal: React.FC<AIOperationsModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      const recentLogs = AIOperationsLogger.getLogs(ventureId);
-      const summary = AIOperationsLogger.getSummaryStats(ventureId);
-      setLogs(recentLogs);
-      setStats(summary);
+      const refresh = () => {
+        setLogs(AIOperationsLogger.getLogs(ventureId));
+        setStats(AIOperationsLogger.getSummaryStats(ventureId));
+      };
+      refresh();
+      if (ventureId) void AIOperationsLogger.hydrate(ventureId).then(refresh);
     }
   }, [isOpen, ventureId]);
 

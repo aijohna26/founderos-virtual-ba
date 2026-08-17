@@ -39,6 +39,7 @@ export function StandupTab({
   const [interimTranscript, setInterimTranscript] = useState("");
   const [activeToolNotice, setActiveToolNotice] = useState<string | null>(null);
   const [audioAnalyser, setAudioAnalyser] = useState<AnalyserNode | null>(null);
+  const [, setPersistenceRevision] = useState(0);
 
   const liveClientRef = useRef<GeminiLiveService | null>(null);
   const fallbackActiveRef = useRef(false);
@@ -58,6 +59,19 @@ export function StandupTab({
 
   const commitments = CommitmentStore.getOutstandingCommitments(venture.id);
   const learnings = CommitmentStore.getLearnings(venture.id);
+
+  useEffect(() => {
+    let active = true;
+    const refresh = () => setPersistenceRevision((revision) => revision + 1);
+    window.addEventListener("founderally:persistence", refresh);
+    void CommitmentStore.hydrate(venture.id).then(() => {
+      if (active) refresh();
+    });
+    return () => {
+      active = false;
+      window.removeEventListener("founderally:persistence", refresh);
+    };
+  }, [venture.id]);
 
   const handleSelectPersona = (persona: BusinessPersona) => {
     const updatedVenture: Venture = { ...venture, advisorId: persona.id };

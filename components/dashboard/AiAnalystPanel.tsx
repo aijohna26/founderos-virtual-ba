@@ -45,6 +45,7 @@ export interface AiAnalystPanelProps {
   onMobileClose?: () => void;
   onMobileOpen?: () => void;
   voiceControlsManagedExternally?: boolean;
+  activeWorkspace?: string;
 }
 
 export function AiAnalystPanel({
@@ -56,6 +57,7 @@ export function AiAnalystPanel({
   onMobileClose,
   onMobileOpen,
   voiceControlsManagedExternally = false,
+  activeWorkspace,
 }: AiAnalystPanelProps) {
   const advisor = resolveAdvisor(venture.advisorId, venture.advisorVoiceName);
   const [micMuted, setMicMuted] = useState(false);
@@ -69,7 +71,7 @@ export function AiAnalystPanel({
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [showAdvisorPicker, setShowAdvisorPicker] = useState(false);
   const [scheduledTime, setScheduledTime] = useState(venture?.standupTime || "09:00 AM");
-  const [memories, setMemories] = useState<MemoryFact[]>([]);
+  const [memories, setMemories] = useState<MemoryFact[]>(() => MemoryService.getMemories(venture.id));
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const latestMsgRef = useRef<HTMLDivElement>(null);
   const analystRequestRef = useRef<AbortController | null>(null);
@@ -124,8 +126,13 @@ export function AiAnalystPanel({
   // Load long-term memory for active venture
   useEffect(() => {
     if (venture?.id) {
-      const loadedMemories = MemoryService.getMemories(venture.id);
-      setMemories(loadedMemories);
+      let active = true;
+      void MemoryService.hydrate(venture.id).then((hydrated) => {
+        if (active && hydrated) setMemories(MemoryService.getMemories(venture.id));
+      });
+      return () => {
+        active = false;
+      };
     }
   }, [venture?.id]);
 
@@ -498,7 +505,9 @@ export function AiAnalystPanel({
       <div className="p-3 border-b border-slate-100 flex items-center justify-between">
         <div>
           <div className="flex items-center gap-1.5">
-            <h2 className="text-xs font-bold text-slate-900">AI BA Co-Pilot</h2>
+            <h2 className="text-xs font-bold text-slate-900">
+              {activeWorkspace === "Board" ? "Board Co-Pilot" : "AI BA Co-Pilot"}
+            </h2>
             <span className="text-[9px] font-black px-1.5 py-0.2 rounded-md bg-blue-100 text-blue-700">
               Gemini
             </span>
@@ -571,6 +580,12 @@ export function AiAnalystPanel({
           </button>
         </div>
       </div>
+
+      {activeWorkspace === "Board" && (
+        <div className="mx-3 mt-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-[10px] font-semibold leading-relaxed text-blue-800">
+          Board context is live. Ask {advisor.name} to create a ticket, move work, or record your commitment.
+        </div>
+      )}
 
       {showAdvisorPicker && (
         <div className="absolute left-3 right-3 top-[4.25rem] z-50 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-900/20 animate-in fade-in slide-in-from-top-2 duration-150">
