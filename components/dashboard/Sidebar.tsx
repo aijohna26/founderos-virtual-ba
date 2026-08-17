@@ -6,6 +6,7 @@ import {
   Home,
   PhoneCall,
   LayoutGrid,
+  RotateCcw,
   Compass,
   Lightbulb,
   FileText,
@@ -19,10 +20,12 @@ import {
   ChevronRight,
   ChevronDown,
   Zap,
-  X
+  X,
+  Sparkles
 } from "lucide-react";
 import { UserButton, useUser } from "@clerk/nextjs";
 import { Venture } from "@/lib/store/ventureStore";
+import { SHOW_ADVANCED_FEATURES } from "@/lib/config/featureFlags";
 
 export interface SidebarProps {
   activeTab: string;
@@ -65,15 +68,23 @@ export function Sidebar({
   const totalCards = doneCount + inProgressCount + todayCount + backlogCount + blockedCount;
   const progressPercent = totalCards > 0 ? Math.round((doneCount / totalCards) * 100) : 0;
 
-  const workspaceNav = [
+  // Primary Features: Always visible
+  const primaryNav = [
+    { id: "Today", name: "Today", icon: Home },
     { id: "Board", name: "Board", icon: LayoutGrid },
+    { id: "Standup", name: "Stand-up", icon: PhoneCall },
+    { id: "Retrospective", name: "Retrospective", icon: RotateCcw },
+    { id: "Documents", name: "Documents", icon: FolderClosed },
+  ];
+
+  // Advanced Features: Visible only when SHOW_ADVANCED_FEATURES=true
+  const advancedNav = [
     { id: "Strategy", name: "Strategy", icon: Compass },
     { id: "Assumptions", name: "Assumptions", icon: Lightbulb },
     { id: "Requirements", name: "Requirements", icon: FileText },
     { id: "Experiments", name: "Experiments", icon: FlaskConical },
     { id: "Roadmap", name: "Roadmap", icon: Map },
     { id: "Metrics", name: "Metrics", icon: BarChart3 },
-    { id: "Documents", name: "Documents", icon: FolderClosed },
   ];
 
   const handleTabClick = (tabId: string) => {
@@ -110,82 +121,65 @@ export function Sidebar({
           )}
         </div>
 
-        {/* Primary Views (Home & Daily Call) */}
+        {/* Primary Workspace Navigation */}
         <div className="space-y-0.5">
-          <button
-            onClick={() => handleTabClick("Overview")}
-            className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg font-semibold text-xs transition-colors cursor-pointer ${
-              activeTab === "Overview"
-                ? "bg-blue-50/80 text-blue-700 shadow-2xs font-bold"
-                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-            }`}
-          >
-            <Home className={`w-3.5 h-3.5 ${activeTab === "Overview" ? "text-blue-600" : "text-slate-400"}`} />
-            <span>Home</span>
-          </button>
-
-          <button
-            onClick={() => {
-              const nextState = !isDailyCallActive;
-              setIsDailyCallActive(nextState);
-              if (nextState) {
-                handleTabClick("Board");
-              } else {
-                onMobileClose?.();
-              }
-            }}
-            className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg font-semibold text-xs transition-colors cursor-pointer ${
-              isDailyCallActive
-                ? "bg-purple-600 text-white font-bold shadow-xs shadow-purple-500/20"
-                : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-            }`}
-          >
-            <div className="flex items-center gap-2.5">
-              <PhoneCall
-                className={`w-3.5 h-3.5 ${
-                  isDailyCallActive ? "text-white animate-pulse" : "text-slate-400"
-                }`}
-              />
-              <span>Daily Call</span>
-            </div>
-            {isDailyCallActive && (
-              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-            )}
-          </button>
-        </div>
-
-        {/* Section 1: Workspace Tabs */}
-        <div>
           <div className="px-2.5 pb-1">
             <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
-              Workspace
+              AI Co-Pilot Workspace
             </span>
           </div>
-          <div className="space-y-0.5">
-            {workspaceNav.map((item) => {
+
+          {primaryNav.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id || (item.id === "Today" && activeTab === "Overview");
+
+            return (
+              <button
+                key={item.id}
+                onClick={() => handleTabClick(item.id)}
+                className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg font-semibold text-xs transition-colors cursor-pointer ${
+                  isActive
+                    ? "bg-blue-50/80 text-blue-700 shadow-2xs font-bold"
+                    : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                }`}
+              >
+                <Icon className={`w-3.5 h-3.5 ${isActive ? "text-blue-600" : "text-slate-400"}`} />
+                <span>{item.name}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Advanced Features Navigation (Only if feature flag enabled) */}
+        {SHOW_ADVANCED_FEATURES && (
+          <div className="space-y-0.5 pt-2 border-t border-slate-100">
+            <div className="px-2.5 pb-1">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-indigo-500">
+                Advanced Modules
+              </span>
+            </div>
+
+            {advancedNav.map((item) => {
               const Icon = item.icon;
-              const isSelected = activeTab === item.id;
+              const isActive = activeTab === item.id;
+
               return (
                 <button
                   key={item.id}
                   onClick={() => handleTabClick(item.id)}
                   className={`w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg font-semibold text-xs transition-colors cursor-pointer ${
-                    isSelected
-                      ? "bg-blue-50/80 text-blue-700 shadow-2xs font-bold"
+                    isActive
+                      ? "bg-indigo-50/80 text-indigo-700 shadow-2xs font-bold"
                       : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
                   }`}
                 >
-                  <Icon
-                    className={`w-3.5 h-3.5 ${
-                      isSelected ? "text-blue-600" : "text-slate-400"
-                    }`}
-                  />
+                  <Icon className={`w-3.5 h-3.5 ${isActive ? "text-indigo-600" : "text-slate-400"}`} />
                   <span>{item.name}</span>
                 </button>
               );
             })}
           </div>
-        </div>
+        )}
 
         {/* Section 2: Ventures / Projects */}
         <div>

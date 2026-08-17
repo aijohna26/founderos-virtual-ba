@@ -25,6 +25,7 @@ import { Venture, VentureStore, ChatMessage, KanbanCard } from "@/lib/store/vent
 import { VoiceEngine, VoiceState } from "@/lib/voice/voiceEngine";
 import { GeminiLiveClient } from "@/lib/voice/geminiLiveClient";
 import { MemoryService, MemoryFact } from "@/lib/db/memoryService";
+import { BAAgentService } from "@/lib/agent/baAgentService";
 
 export interface AiAnalystPanelProps {
   isDailyCallActive: boolean;
@@ -102,13 +103,15 @@ export function AiAnalystPanel({
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pendingTranscriptRef = useRef<string>("");
 
-  // Initialize Speech Recognition & Voice Engine with Echo Prevention & Silence Detection
+  // Initialize Speech Recognition & Voice Engine with Real-Time Interruption & Silence Detection
   useEffect(() => {
     VoiceEngine.preloadVoices();
     VoiceEngine.initRecognition(
       (transcript, isFinal) => {
-        if (!transcript.trim() || isSpeakingAI) return;
+        if (!transcript.trim()) return;
 
+        // If user spoke, ensure AI speaking state is immediately cleared
+        setIsSpeakingAI(false);
         setInputVal(transcript);
         pendingTranscriptRef.current = transcript.trim();
 
@@ -120,9 +123,16 @@ export function AiAnalystPanel({
         // Wait for the user to finish speaking (600ms on final or 1300ms on pause)
         const delay = isFinal ? 600 : 1300;
         silenceTimerRef.current = setTimeout(() => {
-          if (pendingTranscriptRef.current.trim().length > 0 && !isTyping && !isSpeakingAI) {
+          if (pendingTranscriptRef.current.trim().length > 0 && !isTyping) {
             const textToSubmit = pendingTranscriptRef.current.trim();
             pendingTranscriptRef.current = "";
+
+            // 🛑 Block self-echo loop fragments
+            const lower = textToSubmit.toLowerCase();
+            if (lower === "got it" || lower === "got it." || lower === "got it looking" || lower === "i" || lower === "the") {
+              return;
+            }
+
             submitMessage(textToSubmit);
           }
         }, delay);
@@ -136,6 +146,7 @@ export function AiAnalystPanel({
       () => {
         // Interrupted callback: User spoke over AI
         setIsSpeakingAI(false);
+        setVoiceState("listening");
       }
     );
 
@@ -233,73 +244,14 @@ export function AiAnalystPanel({
         data.reply ||
         `I've analyzed your input for ${venture.name}. Let's prioritize validating your core hypothesis.`;
 
-      // Apply any autonomous board actions returned by Gemini
-      let currentColumns = { ...venture.columns };
-      let currentPriorities = [...(venture.priorities || [])];
-      let currentAssumptions = [...(venture.assumptions || [])];
+      let currentVenture: Venture = { ...venture };
 
       if (Array.isArray(data.actions) && data.actions.length > 0) {
         for (const action of data.actions) {
-          if (action.type === "create_card" && action.title) {
-            const colKey = (action.column || "today") as keyof Venture["columns"];
-            const newCard: KanbanCard = {
-              id: "c-ai-" + Date.now() + Math.random().toString(36).substr(2, 4),
-              title: action.title,
-              category: action.category || "Feature",
-              priority: action.priority || "High",
-              owner: "YOU",
-            };
-            const existingItems = currentColumns[colKey]?.items || [];
-            currentColumns = {
-              ...currentColumns,
-              [colKey]: {
-                ...currentColumns[colKey],
-                items: [...existingItems, newCard],
-              },
-            };
-          } else if (action.type === "move_card" && action.cardTitle && action.toColumn) {
-            const toCol = action.toColumn as keyof Venture["columns"];
-            let foundCard: KanbanCard | null = null;
-            let fromCol: keyof Venture["columns"] | null = null;
-
-            for (const colName of Object.keys(currentColumns) as (keyof Venture["columns"])[]) {
-              const match = currentColumns[colName]?.items?.find((c) =>
-                c.title.toLowerCase().includes(action.cardTitle.toLowerCase().slice(0, 10))
-              );
-              if (match) {
-                foundCard = match;
-                fromCol = colName;
-                break;
-              }
-            }
-
-            if (foundCard && fromCol && fromCol !== toCol) {
-              const updatedFrom = (currentColumns[fromCol]?.items || []).filter(
-                (c) => c.id !== foundCard!.id
-              );
-              const updatedTo = [
-                ...(currentColumns[toCol]?.items || []),
-                { ...foundCard, completed: toCol === "done" },
-              ];
-
-              currentColumns = {
-                ...currentColumns,
-                [fromCol]: { ...currentColumns[fromCol], items: updatedFrom },
-                [toCol]: { ...currentColumns[toCol], items: updatedTo },
-              };
-            }
-          } else if (action.type === "add_priority" && action.title) {
-            const newPrio = {
-              id: "pr-" + Date.now(),
-              num: currentPriorities.length + 1,
-              title: action.title,
-              tag: action.tag || "Experiment",
-              tagColor: "bg-blue-50 text-blue-700 border-blue-200",
-              owner: "YOU",
-              priority: action.priority || "High",
-              priorityColor: "text-rose-600 font-bold",
-            };
-            currentPriorities = [...currentPriorities, newPrio];
+          const toolName = action.type;
+          const execRes = BAAgentService.executeTool(toolName, action, currentVenture, "daily_standup");
+          if (execRes.updatedVenture) {
+            currentVenture = execRes.updatedVenture;
           }
         }
       }
@@ -311,11 +263,8 @@ export function AiAnalystPanel({
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
 
-      const finalVenture = {
-        ...venture,
-        columns: currentColumns,
-        priorities: currentPriorities,
-        assumptions: currentAssumptions,
+      const finalVenture: Venture = {
+        ...currentVenture,
         chatHistory: [...updatedHistory, aiMsg],
       };
 
@@ -704,9 +653,15 @@ export function AiAnalystPanel({
             )}
           </button>
 
-          {/* Direct Speak / Play Voice button */}
+          {/* Direct Speak / Play Voice / Interrupt button */}
           <button
             onClick={() => {
+              if (isSpeakingAI) {
+                VoiceEngine.stopSpeaking();
+                setIsSpeakingAI(false);
+                setVoiceState("listening");
+                return;
+              }
               VoiceEngine.unlockAudio();
               setVoiceAudioEnabled(true);
               const lastAiMsg = [...messages].reverse().find((m) => m.sender === "ai");
@@ -720,12 +675,12 @@ export function AiAnalystPanel({
             }}
             className={`p-2.5 rounded-full transition-all cursor-pointer ${
               isSpeakingAI
-                ? "bg-purple-600 text-white ring-2 ring-purple-300 animate-pulse"
+                ? "bg-rose-600 hover:bg-rose-700 text-white ring-2 ring-rose-300 animate-pulse"
                 : "bg-slate-100 text-slate-700 hover:bg-slate-200"
             }`}
-            title={isSpeakingAI ? "AI is speaking" : "Speak latest message aloud"}
+            title={isSpeakingAI ? "Click to interrupt Sarah" : "Speak latest message aloud"}
           >
-            <Volume2 className="w-4 h-4" />
+            {isSpeakingAI ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
           </button>
         </div>
 

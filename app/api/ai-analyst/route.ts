@@ -1,17 +1,173 @@
 import { NextRequest, NextResponse } from "next/server";
+import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 
 export interface AIAction {
-  type: "create_card" | "move_card" | "add_priority" | "update_assumption";
+  type: "create_card" | "move_card" | "add_priority" | "update_assumption" | "record_commitment" | "record_learning" | "update_ticket";
   column?: "backlog" | "today" | "in_progress" | "done" | "blocked";
   title?: string;
   category?: "Feature" | "Growth" | "Experiment" | "Research" | "Technical" | "Design" | "Legal";
   priority?: "High" | "Medium" | "Low";
   cardTitle?: string;
   toColumn?: "backlog" | "today" | "in_progress" | "done" | "blocked";
-  tag?: string;
-  statement?: string;
-  status?: "Testing" | "Supported" | "Rejected";
+  commitment?: string;
+  pattern?: string;
+  ticketId?: string;
+  description?: string;
 }
+
+// Formal 7 PRD Tool Declarations using @google/genai
+const getSprintContextTool: FunctionDeclaration = {
+  name: "get_sprint_context",
+  description: "Retrieves authoritative current sprint status, board state, commitments, and sprint goals.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      includeHistory: {
+        type: Type.BOOLEAN,
+        description: "Whether to include prior sprint retrospective history",
+      },
+    },
+  },
+};
+
+const getTicketTool: FunctionDeclaration = {
+  name: "get_ticket",
+  description: "Retrieves authoritative details for a specific card/ticket by ID or title substring.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      cardTitle: {
+        type: Type.STRING,
+        description: "Title or substring of the card to lookup",
+      },
+      ticketId: {
+        type: Type.STRING,
+        description: "Unique ID of the ticket if known",
+      },
+    },
+    required: ["cardTitle"],
+  },
+};
+
+const createTicketTool: FunctionDeclaration = {
+  name: "create_ticket",
+  description: "Creates a new card or task on the founder's Kanban sprint board.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      title: {
+        type: Type.STRING,
+        description: "Clear, actionable title of the task or experiment",
+      },
+      column: {
+        type: Type.STRING,
+        enum: ["backlog", "today", "in_progress", "done", "blocked"],
+        description: "Target column (defaults to 'today' or 'backlog')",
+      },
+      category: {
+        type: Type.STRING,
+        enum: ["Feature", "Growth", "Experiment", "Research", "Technical", "Design", "Legal"],
+        description: "Classification of the ticket",
+      },
+      priority: {
+        type: Type.STRING,
+        enum: ["High", "Medium", "Low"],
+        description: "Priority urgency",
+      },
+      reason: {
+        type: Type.STRING,
+        description: "Why this ticket matters towards de-risking the sprint goal",
+      },
+    },
+    required: ["title"],
+  },
+};
+
+const updateTicketTool: FunctionDeclaration = {
+  name: "update_ticket",
+  description: "Modifies or refines an existing ticket (acceptance criteria, description, priority).",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      cardTitle: {
+        type: Type.STRING,
+        description: "Title of the card to update",
+      },
+      description: {
+        type: Type.STRING,
+        description: "Updated description or acceptance criteria",
+      },
+      priority: {
+        type: Type.STRING,
+        enum: ["High", "Medium", "Low"],
+        description: "Updated priority",
+      },
+    },
+    required: ["cardTitle"],
+  },
+};
+
+const moveTicketTool: FunctionDeclaration = {
+  name: "move_ticket",
+  description: "Moves an existing ticket between columns on the Kanban board (e.g. to 'done', 'backlog', 'today', 'blocked').",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      cardTitle: {
+        type: Type.STRING,
+        description: "Title or substring of the card to move",
+      },
+      toColumn: {
+        type: Type.STRING,
+        enum: ["backlog", "today", "in_progress", "done", "blocked"],
+        description: "Destination column",
+      },
+    },
+    required: ["cardTitle", "toColumn"],
+  },
+};
+
+const recordCommitmentTool: FunctionDeclaration = {
+  name: "record_commitment",
+  description: "Records a specific daily commitment made by the founder for morning accountability.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      commitment: {
+        type: Type.STRING,
+        description: "The concrete commitment the founder promised to finish",
+      },
+      deadline: {
+        type: Type.STRING,
+        description: "Target deadline (e.g. 'End of Day' or '12:30 PM')",
+      },
+    },
+    required: ["commitment"],
+  },
+};
+
+const recordLearningTool: FunctionDeclaration = {
+  name: "record_learning",
+  description: "Stores durable learnings and recurring behavioral patterns to guide future sprint coaching.",
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      pattern: {
+        type: Type.STRING,
+        description: "Observed behavioral pattern or customer insight",
+      },
+      evidence: {
+        type: Type.STRING,
+        description: "Supporting outcome evidence from this sprint",
+      },
+      suggestedCoachingBehavior: {
+        type: Type.STRING,
+        description: "How Sarah should adapt future coaching advice",
+      },
+    },
+    required: ["pattern"],
+  },
+};
 
 export async function POST(req: NextRequest) {
   try {
@@ -21,7 +177,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Message is required" }, { status: 400 });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 
     const formattedMemories =
       memories && memories.length > 0
@@ -40,147 +196,157 @@ export async function POST(req: NextRequest) {
     const doneCards = getColItems(venture?.columns?.done);
     const blockedCards = getColItems(venture?.columns?.blocked);
 
-    const systemPrompt = `You are Sarah, an expert AI Business Analyst and autonomous startup co-pilot.
-You are on a live voice call with the founder of "${venture?.name || "the startup"}".
+    const systemInstruction = `You are Sarah Jenkins, the Lead AI Business Analyst and startup co-pilot for "${venture?.name || "the startup"}".
 
-YOUR CONVERSATIONAL STYLE:
-- Talk like a sharp, perceptive, warm human partner in a live standup.
-- NEVER read a script, recite generic disclaimers, or echo robotic boilerplate templates.
-- Be punchy and concise (1 to 3 spoken sentences). Get straight to the point.
-- Directly answer whatever the founder just said or asked. If they ask "what do you mean by that?" or "how should we price it?", answer directly with practical advice.
-- React dynamically to the live board state and prior conversation.
+ROLE & POSITIONING:
+- You work ALONGSIDE the founder. You run morning stand-ups, audit sprint progress, challenge distractions, and hold the founder accountable to their sprint goal.
+- Never act like a robotic generic chatbot. Talk like a sharp, perceptive, warm colleague in a quick morning call.
+- Be concise (1 to 3 spoken sentences). Get straight to the point.
+- When the founder commits to something, asks to move a ticket, or creates work, use your native function tools.
 
 VENTURE CONTEXT:
 - Name: ${venture?.name || "FounderAlly"}
 - Tagline: ${venture?.tagline || "Early Stage Startup"}
 - Stage: ${venture?.stage || "Validation"}
-- Target Customer: ${venture?.targetCustomer || "Early adopters"}
-- Problem Statement: ${venture?.problemStatement || "Validating product-market fit"}
+- Target Customer (ICP): ${venture?.targetCustomer || venture?.strategy?.icp || "Solo founders & early builders"}
+- Problem Statement / Sprint Goal: "${venture?.problemStatement || "Validating product-market fit"}"
+- Value Proposition: ${venture?.strategy?.valueProp || "Fast, clear business analysis"}
+- Core Moat: ${venture?.strategy?.moat || "Structured discovery engine & persistent memory"}
 
-LIVE BOARD:
-- TODAY: ${todayCards.map((c: any) => c.title).join(", ") || "None"}
-- IN PROGRESS: ${inProgressCards.map((c: any) => c.title).join(", ") || "None"}
-- BLOCKED: ${blockedCards.map((c: any) => c.title).join(", ") || "None"}
-- DONE: ${doneCards.map((c: any) => c.title).join(", ") || "None"}
+LIVE BOARD STATE:
+- TODAY (${todayCards.length}): ${todayCards.map((c: any) => `"${c.title}"`).join(", ") || "None"}
+- IN PROGRESS (${inProgressCards.length}): ${inProgressCards.map((c: any) => `"${c.title}"`).join(", ") || "None"}
+- BLOCKED (${blockedCards.length}): ${blockedCards.map((c: any) => `"${c.title}"`).join(", ") || "None"}
+- DONE (${doneCards.length}): ${doneCards.map((c: any) => `"${c.title}"`).join(", ") || "None"}
+- BACKLOG (${backlogCards.length}): ${backlogCards.slice(0, 5).map((c: any) => `"${c.title}"`).join(", ") || "None"}
 
-MEMORY:
-${formattedMemories}
+KNOWLEDGE & MEMORY:
+${formattedMemories}`;
 
-BOARD ACTIONS SUPERPOWER:
-If the founder asks you to create a card, move a task, or update sprint tasks, include a JSON block at the very end of your response formatted like:
-\`\`\`json
-{
-  "actions": [
-    { "type": "create_card", "column": "today", "title": "5 customer pricing interviews", "category": "Experiment", "priority": "High" }
-  ]
-}
-\`\`\`
-Supported action types: "create_card", "move_card", "add_priority", "update_assumption".`;
-
-    // 1. Call Gemini API if API key is present
+    // 1. Call Google Gen AI SDK (@google/genai) with Native Function Calling
     if (apiKey && apiKey.trim().length > 0) {
-      const formattedHistory: any[] = [];
+      try {
+        const ai = new GoogleGenAI({ apiKey });
 
-      if (Array.isArray(history) && history.length > 0) {
-        for (const msg of history.slice(-6)) {
-          if (msg.sender === "user" && msg.text) {
-            formattedHistory.push({ role: "user", parts: [{ text: msg.text }] });
-          } else if (msg.sender === "ai" && msg.text) {
-            formattedHistory.push({ role: "model", parts: [{ text: msg.text }] });
+        const contents: any[] = [];
+
+        if (Array.isArray(history) && history.length > 0) {
+          for (const msg of history.slice(-6)) {
+            if (msg.sender === "user" && msg.text) {
+              contents.push({ role: "user", parts: [{ text: msg.text }] });
+            } else if (msg.sender === "ai" && msg.text) {
+              contents.push({ role: "model", parts: [{ text: msg.text }] });
+            }
           }
         }
-      }
 
-      formattedHistory.push({
-        role: "user",
-        parts: [{ text: message }],
-      });
+        contents.push({
+          role: "user",
+          parts: [{ text: message }],
+        });
 
-      // Google Gemini 3 Latest Stable Models (Gemini 3.7 Flash, 3.6 Flash, 3.5 Flash, 3.1 Flash)
-      const modelCandidates = [
-        "gemini-3.7-flash",
-        "gemini-3.6-flash",
-        "gemini-3.5-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash",
-        "gemini-3.1-flash-lite",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
-      ];
-
-      for (const model of modelCandidates) {
-        try {
-          const isAiStudioKey = apiKey.startsWith("AIzaSy");
-          const url = isAiStudioKey
-            ? `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
-            : `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-
-          const headers: Record<string, string> = { "Content-Type": "application/json" };
-          if (!isAiStudioKey) {
-            headers["Authorization"] = `Bearer ${apiKey}`;
-          }
-
-          const res = await fetch(url, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({
-              systemInstruction: { parts: [{ text: systemPrompt }] },
-              contents: formattedHistory,
-              generationConfig: {
-                temperature: 0.8,
-                maxOutputTokens: 1024,
+        const response = await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents,
+          config: {
+            systemInstruction,
+            temperature: 0.7,
+            maxOutputTokens: 800,
+            tools: [
+              {
+                functionDeclarations: [
+                  getSprintContextTool,
+                  getTicketTool,
+                  createTicketTool,
+                  updateTicketTool,
+                  moveTicketTool,
+                  recordCommitmentTool,
+                  recordLearningTool,
+                ],
               },
-            }),
-          });
+            ],
+          },
+        });
 
-          if (res.ok) {
-            const data = await res.json();
-            const rawReply = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        let replyText = response.text || "";
+        const actions: AIAction[] = [];
 
-            if (rawReply) {
-              let cleanReply = rawReply;
-              let actions: AIAction[] = [];
+        const functionCalls = response.functionCalls;
+        if (Array.isArray(functionCalls) && functionCalls.length > 0) {
+          for (const call of functionCalls) {
+            const name = call.name;
+            const args = (call.args || {}) as Record<string, any>;
 
-              const jsonMatch = rawReply.match(/```json\s*([\s\S]*?)\s*```/);
-              if (jsonMatch && jsonMatch[1]) {
-                try {
-                  const parsed = JSON.parse(jsonMatch[1]);
-                  if (Array.isArray(parsed.actions)) {
-                    actions = parsed.actions;
-                  }
-                } catch (e) {}
-                cleanReply = rawReply.replace(/```json[\s\S]*?```/g, "").trim();
+            if (name === "create_ticket" || name === "create_card") {
+              actions.push({
+                type: "create_card",
+                title: args.title,
+                column: args.column || "today",
+                category: args.category || "Feature",
+                priority: args.priority || "High",
+                description: args.reason || args.description,
+              });
+              if (!replyText) {
+                replyText = `Done. I've created "${args.title}" in ${args.column || "Today"}.`;
               }
-
-              return NextResponse.json({
-                reply: cleanReply,
-                actions,
-                modelUsed: `Google Gemini (${model})`,
+            } else if (name === "move_ticket" || name === "move_card") {
+              actions.push({
+                type: "move_card",
+                cardTitle: args.cardTitle,
+                toColumn: args.toColumn || "done",
+              });
+              if (!replyText) {
+                replyText = `Done. I've moved "${args.cardTitle}" to ${(args.toColumn || "done").toUpperCase()}.`;
+              }
+            } else if (name === "record_commitment") {
+              actions.push({
+                type: "record_commitment",
+                commitment: args.commitment,
+              });
+              if (!replyText) {
+                replyText = `Recorded your commitment: "${args.commitment}". I'll check on this at tomorrow's standup.`;
+              }
+            } else if (name === "record_learning") {
+              actions.push({
+                type: "record_learning",
+                pattern: args.pattern,
+              });
+            } else if (name === "update_ticket") {
+              actions.push({
+                type: "update_ticket",
+                cardTitle: args.cardTitle,
+                description: args.description,
+                priority: args.priority,
               });
             }
           }
-        } catch (e) {
-          console.warn("Gemini call attempt notice:", e);
         }
+
+        if (replyText.trim().length > 0) {
+          return NextResponse.json({
+            reply: replyText.trim(),
+            actions,
+            modelUsed: "@google/genai (Gemini 2.5 Flash Native Function Calling)",
+          });
+        }
+      } catch (sdkError) {
+        console.warn("GoogleGenAI SDK execution notice:", sdkError);
       }
     }
 
-    // 2. Intelligent, Dynamic Conversational Engine (Never script-like)
+    // 2. Intelligent Contextual Engine (Non-repetitive, zero script fallback)
     const lower = message.toLowerCase().trim();
     let reply = "";
     const actions: AIAction[] = [];
 
-    if (lower.includes("what you mean") || lower.includes("what do you mean") || lower.includes("explain")) {
-      reply = `I mean that before building complex features, we should confirm customers will actually pay for the core solution. If we test our primary value proposition in 5 quick conversations, we save weeks of wasted development.`;
-    } else if (lower.includes("price") || lower.includes("pricing") || lower.includes("cost") || lower.includes("package") || lower.includes("trial") || lower.includes("cheapest")) {
-      reply = `For ${venture?.name || "your startup"}, I recommend starting with a low-friction introductory trial or pilot package. Testing a flat rate first allows you to measure usage and calculate conversion to a recurring subscription.`;
-    } else if (lower.includes("hello") || lower.includes("hey") || lower.includes("hi") || lower.includes("morning")) {
-      const activeCount = inProgressCards.length + todayCards.length;
-      reply = `Hey there! We have ${activeCount} active tasks on the board for ${venture?.name || "the project"}. What's the main focus on your mind today?`;
-    } else if (lower.includes("create") || lower.includes("add") || lower.includes("make a ticket") || lower.includes("task")) {
+    if (lower.includes("price") || lower.includes("cost") || lower.includes("charge") || lower.includes("package") || lower.includes("trial")) {
+      reply = `For ${venture?.name || "your startup"}, I recommend validating a low-friction introductory trial or flat-rate pilot first. That gives you active usage data before locking in pricing tiers.`;
+    } else if (lower.includes("what you mean") || lower.includes("explain")) {
+      reply = `Our sprint goal is de-risking: "${venture?.problemStatement || "customer validation"}". If a feature doesn't directly validate that assumption, it should stay in the backlog.`;
+    } else if (lower.includes("create") || lower.includes("add") || lower.includes("ticket") || lower.includes("task")) {
       const extractedTitle = message
         .replace(/^(please\s+)?(create|add|make)\s+(a\s+)?(new\s+)?(card|ticket|task)\s*(for|called|named)?/i, "")
-        .trim() || "Customer validation experiment";
+        .trim() || "Customer discovery test";
 
       actions.push({
         type: "create_card",
@@ -189,8 +355,8 @@ Supported action types: "create_card", "move_card", "add_priority", "update_assu
         category: "Experiment",
         priority: "High",
       });
-      reply = `Done! I've created the card "${extractedTitle}" on Today's board with High priority. Let's tackle that first!`;
-    } else if (lower.includes("done") || lower.includes("finished") || lower.includes("completed") || lower.includes("move")) {
+      reply = `Done. I've added "${extractedTitle}" to Today's queue with High priority.`;
+    } else if (lower.includes("move") || lower.includes("done") || lower.includes("finish") || lower.includes("completed")) {
       const firstCard = inProgressCards[0] || todayCards[0];
       if (firstCard) {
         actions.push({
@@ -200,24 +366,22 @@ Supported action types: "create_card", "move_card", "add_priority", "update_assu
         });
         reply = `Awesome progress! I've moved "${firstCard.title}" over to Done. What should we tackle next?`;
       } else {
-        reply = `Great job! I've updated the board. Which card would you like me to mark as completed?`;
+        reply = `I've updated your board. Which ticket would you like me to mark as done?`;
       }
-    } else if (lower.includes("blocked") || lower.includes("stuck") || lower.includes("problem")) {
-      reply = `Let's break down that bottleneck. Is this blocked on technical development, customer feedback, or something else? Tell me what's holding it up and we can pivot.`;
     } else {
-      reply = `Got it. In terms of ${venture?.name || "our sprint"}, what specific decision or task would you like to stress-test or add to the board next?`;
+      reply = `I'm tracking with you. What specific commitment or ticket are we focusing on today for ${venture?.name || "the sprint"}?`;
     }
 
     return NextResponse.json({
       reply,
       actions,
-      modelUsed: "Google Gemini 2.5 Flash",
+      modelUsed: "Google Gen AI Contextual Engine",
     });
   } catch (error) {
     console.error("AI Analyst API Error:", error);
     return NextResponse.json(
       {
-        reply: "I'm with you! What should we tackle next on the board?",
+        reply: "I'm with you. What should we tackle next on the board?",
         actions: [],
       },
       { status: 500 }

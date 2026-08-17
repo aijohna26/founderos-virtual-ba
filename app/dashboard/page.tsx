@@ -7,6 +7,8 @@ import { Sidebar } from "@/components/dashboard/Sidebar";
 import { TopHeader } from "@/components/dashboard/TopHeader";
 import { OverviewTab } from "@/components/dashboard/OverviewTab";
 import { BoardTab } from "@/components/dashboard/BoardTab";
+import { StandupTab } from "@/components/dashboard/StandupTab";
+import { RetroTab } from "@/components/dashboard/RetroTab";
 import { StrategyTab } from "@/components/dashboard/StrategyTab";
 import { AssumptionsTab } from "@/components/dashboard/AssumptionsTab";
 import { RequirementsTab } from "@/components/dashboard/RequirementsTab";
@@ -20,9 +22,10 @@ import { DailyCallAlertModal } from "@/components/dashboard/DailyCallAlertModal"
 import { SettingsModal } from "@/components/dashboard/SettingsModal";
 import { HelpSupportModal } from "@/components/dashboard/HelpSupportModal";
 import { VentureStore, Venture } from "@/lib/store/ventureStore";
+import { SHOW_ADVANCED_FEATURES } from "@/lib/config/featureFlags";
 
 export default function DashboardPage() {
-  const [activeTab, setActiveTab] = useState<string>("Overview");
+  const [activeTab, setActiveTab] = useState<string>("Today");
   const [ventures, setVentures] = useState<Venture[]>([]);
   const [activeVentureId, setActiveVentureId] = useState<string>("founderally");
   const [isDailyCallActive, setIsDailyCallActive] = useState<boolean>(false);
@@ -69,11 +72,15 @@ export default function DashboardPage() {
     );
   }
 
+  // Determine current tab to render with route protection
+  const isPrimaryTab = ["Today", "Overview", "Board", "Standup", "Retrospective", "Retro", "Documents"].includes(activeTab);
+  const effectiveTab = isPrimaryTab || SHOW_ADVANCED_FEATURES ? activeTab : "Today";
+
   return (
     <div className="min-h-screen bg-slate-50 flex font-sans text-slate-900 selection:bg-blue-500 selection:text-white">
       {/* 1. Left Sidebar Navigation (Desktop persistent + Mobile Drawer) */}
       <Sidebar
-        activeTab={activeTab}
+        activeTab={effectiveTab}
         setActiveTab={setActiveTab}
         activeVentureId={activeVenture.id}
         setActiveVentureId={setActiveVentureId}
@@ -91,7 +98,7 @@ export default function DashboardPage() {
       <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
         {/* Top Bar with Venture Switcher & Sub-tabs */}
         <TopHeader
-          activeTab={activeTab}
+          activeTab={effectiveTab}
           setActiveTab={setActiveTab}
           activeVenture={activeVenture}
           ventures={ventures}
@@ -106,36 +113,58 @@ export default function DashboardPage() {
 
         {/* Dynamic Main Workspace Canvas */}
         <main className="flex-1 p-3 sm:p-5 bg-slate-50/50 min-w-0">
-          {activeTab === "Overview" && (
+          {(effectiveTab === "Today" || effectiveTab === "Overview") && (
             <OverviewTab
               venture={activeVenture}
               onUpdateVenture={handleUpdateVenture}
               setActiveTab={setActiveTab}
             />
           )}
-          {activeTab === "Board" && (
+          {effectiveTab === "Board" && (
             <BoardTab
               venture={activeVenture}
               onUpdateVenture={handleUpdateVenture}
             />
           )}
-          {activeTab === "Strategy" && <StrategyTab venture={activeVenture} />}
-          {activeTab === "Assumptions" && (
-            <AssumptionsTab
+          {effectiveTab === "Standup" && (
+            <StandupTab
               venture={activeVenture}
               onUpdateVenture={handleUpdateVenture}
+              isDailyCallActive={isDailyCallActive}
+              setIsDailyCallActive={setIsDailyCallActive}
+              setActiveTab={setActiveTab}
             />
           )}
-          {activeTab === "Requirements" && <RequirementsTab venture={activeVenture} />}
-          {activeTab === "Experiments" && (
-            <ExperimentsTab
+          {(effectiveTab === "Retrospective" || effectiveTab === "Retro") && (
+            <RetroTab
               venture={activeVenture}
               onUpdateVenture={handleUpdateVenture}
+              setActiveTab={setActiveTab}
             />
           )}
-          {activeTab === "Roadmap" && <RoadmapTab venture={activeVenture} />}
-          {activeTab === "Metrics" && <MetricsTab venture={activeVenture} />}
-          {activeTab === "Documents" && <DocumentsTab venture={activeVenture} />}
+          {effectiveTab === "Documents" && <DocumentsTab venture={activeVenture} />}
+
+          {/* Advanced Tabs (Guarded by SHOW_ADVANCED_FEATURES) */}
+          {SHOW_ADVANCED_FEATURES && (
+            <>
+              {effectiveTab === "Strategy" && <StrategyTab venture={activeVenture} />}
+              {effectiveTab === "Assumptions" && (
+                <AssumptionsTab
+                  venture={activeVenture}
+                  onUpdateVenture={handleUpdateVenture}
+                />
+              )}
+              {effectiveTab === "Requirements" && <RequirementsTab venture={activeVenture} />}
+              {effectiveTab === "Experiments" && (
+                <ExperimentsTab
+                  venture={activeVenture}
+                  onUpdateVenture={handleUpdateVenture}
+                />
+              )}
+              {effectiveTab === "Roadmap" && <RoadmapTab venture={activeVenture} />}
+              {effectiveTab === "Metrics" && <MetricsTab venture={activeVenture} />}
+            </>
+          )}
         </main>
       </div>
 

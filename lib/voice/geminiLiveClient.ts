@@ -1,6 +1,7 @@
 "use client";
 
-import { Venture, KanbanCard } from "@/lib/store/ventureStore";
+import { Venture } from "@/lib/store/ventureStore";
+import { BAAgentService } from "@/lib/agent/baAgentService";
 
 export type GeminiLiveVoiceName = "Aoede" | "Kore" | "Puck" | "Fenrir" | "Charon";
 
@@ -9,6 +10,7 @@ export interface GeminiLiveCallbacks {
   onTranscript: (sender: "user" | "ai", text: string, isFinal: boolean) => void;
   onToolCall: (name: string, args: Record<string, any>) => void;
   onError: (error: string) => void;
+  onVentureUpdated?: (venture: Venture) => void;
 }
 
 export class GeminiLiveClient {
@@ -103,7 +105,7 @@ export class GeminiLiveClient {
     }
   }
 
-  // Send initial Setup Frame with System Instructions, Voice, and Live Function Tools
+  // Send Initial Setup Frame with 7 Formal PRD Tools
   private sendInitialSetup(): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
@@ -123,10 +125,11 @@ export class GeminiLiveClient {
         systemInstruction: {
           parts: [
             {
-              text: `You are Sarah, an expert AI Business Analyst and autonomous startup co-pilot talking in real-time with the founder of "${this.venture.name}".
+              text: `You are Sarah Jenkins, the Lead AI Business Analyst for "${this.venture.name}".
+You are on a real-time live voice standup with the founder.
+Goal: "${this.venture.problemStatement || "Validate product-market fit"}".
 Style: Warm, perceptive, crisp, conversational, and direct. Keep spoken answers to 1-3 natural sentences.
-Stage: ${this.venture.stage || "Validation"}. Problem Statement: "${this.venture.problemStatement || "Validating product-market fit"}".
-If the founder asks you to create a ticket, add a card, or move tasks, immediately call the corresponding function tool.`,
+When the founder commits to something, requests a ticket move, creates work, or reflects on sprint learnings, call the appropriate tool immediately and continue speaking after receiving the result.`,
             },
           ],
         },
@@ -134,39 +137,81 @@ If the founder asks you to create a ticket, add a card, or move tasks, immediate
           {
             functionDeclarations: [
               {
-                name: "create_card",
-                description: "Creates a new card/ticket on the live Kanban sprint board",
+                name: "get_sprint_context",
+                description: "Retrieves authoritative sprint goal, board columns, active commitments, and velocity.",
+                parameters: { type: "OBJECT", properties: {} },
+              },
+              {
+                name: "get_ticket",
+                description: "Retrieves details for a specific card by title or ID.",
+                parameters: {
+                  type: "OBJECT",
+                  properties: { cardTitle: { type: "STRING", description: "Card title" } },
+                  required: ["cardTitle"],
+                },
+              },
+              {
+                name: "create_ticket",
+                description: "Creates a new task or card on the Kanban board.",
                 parameters: {
                   type: "OBJECT",
                   properties: {
-                    column: {
-                      type: "STRING",
-                      enum: ["backlog", "today", "in_progress", "done", "blocked"],
-                      description: "The column to place the card in",
-                    },
-                    title: { type: "STRING", description: "Title of the card/task" },
-                    category: {
-                      type: "STRING",
-                      enum: ["Feature", "Growth", "Experiment", "Research", "Technical", "Design", "Legal"],
-                    },
+                    title: { type: "STRING", description: "Title of the card" },
+                    column: { type: "STRING", enum: ["backlog", "today", "in_progress", "done", "blocked"] },
+                    category: { type: "STRING", enum: ["Feature", "Growth", "Experiment", "Research", "Technical", "Design", "Legal"] },
                     priority: { type: "STRING", enum: ["High", "Medium", "Low"] },
+                    reason: { type: "STRING", description: "Why this matters towards the sprint goal" },
                   },
                   required: ["title"],
                 },
               },
               {
-                name: "move_card",
-                description: "Moves an existing Kanban card to a different column",
+                name: "update_ticket",
+                description: "Updates details or description on an existing ticket.",
                 parameters: {
                   type: "OBJECT",
                   properties: {
-                    cardTitle: { type: "STRING", description: "Title or keyword of the card to move" },
-                    toColumn: {
-                      type: "STRING",
-                      enum: ["backlog", "today", "in_progress", "done", "blocked"],
-                    },
+                    cardTitle: { type: "STRING", description: "Card title to update" },
+                    description: { type: "STRING", description: "New description" },
+                    priority: { type: "STRING", enum: ["High", "Medium", "Low"] },
+                  },
+                  required: ["cardTitle"],
+                },
+              },
+              {
+                name: "move_ticket",
+                description: "Moves an existing ticket between board columns (e.g. to 'done' or 'today').",
+                parameters: {
+                  type: "OBJECT",
+                  properties: {
+                    cardTitle: { type: "STRING", description: "Card title or substring" },
+                    toColumn: { type: "STRING", enum: ["backlog", "today", "in_progress", "done", "blocked"] },
                   },
                   required: ["cardTitle", "toColumn"],
+                },
+              },
+              {
+                name: "record_commitment",
+                description: "Records an explicit daily commitment made by the founder for stand-up accountability.",
+                parameters: {
+                  type: "OBJECT",
+                  properties: {
+                    commitment: { type: "STRING", description: "The commitment text" },
+                    deadline: { type: "STRING", description: "Target completion deadline" },
+                  },
+                  required: ["commitment"],
+                },
+              },
+              {
+                name: "record_learning",
+                description: "Stores durable sprint learnings and recurring behavioral patterns.",
+                parameters: {
+                  type: "OBJECT",
+                  properties: {
+                    pattern: { type: "STRING", description: "The learning or pattern observed" },
+                    evidence: { type: "STRING", description: "Supporting evidence" },
+                  },
+                  required: ["pattern"],
                 },
               },
             ],
@@ -196,21 +241,18 @@ If the founder asks you to create a ticket, add a card, or move tasks, immediate
       });
 
       const source = audioCtx.createMediaStreamSource(this.mediaStream);
-      // ScriptProcessor captures raw PCM samples
       this.scriptProcessor = audioCtx.createScriptProcessor(2048, 1, 1);
 
       this.scriptProcessor.onaudioprocess = (e) => {
         if (!this.isConnected || this.isMuted) return;
 
         const inputData = e.inputBuffer.getChannelData(0);
-        // Convert Float32Array [-1.0, 1.0] to Int16 PCM
         const pcm16 = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {
           const s = Math.max(-1, Math.min(1, inputData[i]));
           pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
         }
 
-        // Base64 encode PCM chunk
         const base64Chunk = this.arrayBufferToBase64(pcm16.buffer);
 
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
@@ -238,25 +280,22 @@ If the founder asks you to create a ticket, add a card, or move tasks, immediate
 
   // Handle Incoming Server WebSocket Messages (PCM Audio, Text, Tools, Interruption)
   private handleServerMessage(data: any): void {
-    // 1. Check for Server-Side Interruption / Barge-in
+    // 1. Server-Side Interruption / Barge-In
     if (data.serverContent?.interrupted) {
-      console.log("⚡ Gemini Live interrupted by user speech! Clearing playback buffer...");
+      console.log("⚡ Gemini Live interrupted by user speech! Halting audio buffer...");
       this.stopCurrentAudioPlayback();
       this.callbacks.onStateChange("listening");
       return;
     }
 
-    // 2. Process Model Audio Turn
+    // 2. Model Audio & Transcript Turn
     if (data.serverContent?.modelTurn?.parts) {
       for (const part of data.serverContent.modelTurn.parts) {
-        // Audio chunk (24kHz PCM)
         if (part.inlineData && part.inlineData.data) {
-          const base64Data = part.inlineData.data;
-          this.playPcmChunk(base64Data);
+          this.playPcmChunk(part.inlineData.data);
           this.callbacks.onStateChange("speaking");
         }
 
-        // Text transcript chunk
         if (part.text) {
           this.callbacks.onTranscript("ai", part.text, false);
         }
@@ -268,19 +307,38 @@ If the founder asks you to create a ticket, add a card, or move tasks, immediate
       this.callbacks.onStateChange("listening");
     }
 
-    // 3. Process Function Tool Calls
+    // 3. Native Function Tool Execution Loop
     if (data.toolCall?.functionCalls) {
       for (const call of data.toolCall.functionCalls) {
-        console.log("🔧 Gemini Live Tool Call:", call.name, call.args);
+        console.log("🔧 Gemini Live Native Tool Call:", call.name, call.args);
         this.callbacks.onToolCall(call.name, call.args || {});
 
-        // Send function response back to Gemini Live
+        // Execute tool authoritatively against venture state
+        const toolResult = BAAgentService.executeTool(
+          call.name,
+          call.args || {},
+          this.venture,
+          "daily_standup"
+        );
+
+        if (toolResult.updatedVenture) {
+          this.venture = toolResult.updatedVenture;
+          this.callbacks.onVentureUpdated?.(toolResult.updatedVenture);
+        }
+
+        // Return tool execution result back to Gemini Live
         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
           const responseMsg = {
             toolResponse: {
               functionResponses: [
                 {
-                  response: { output: { success: true } },
+                  response: {
+                    output: {
+                      success: toolResult.success,
+                      message: toolResult.message,
+                      data: toolResult.data || {},
+                    },
+                  },
                   id: call.id,
                 },
               ],
@@ -292,7 +350,7 @@ If the founder asks you to create a ticket, add a card, or move tasks, immediate
     }
   }
 
-  // Play 24kHz PCM audio chunk seamlessly using Web Audio API buffer scheduling
+  // Play 24kHz PCM audio chunk seamlessly
   private playPcmChunk(base64Data: string): void {
     if (!this.audioContext) return;
 
@@ -330,7 +388,7 @@ If the founder asks you to create a ticket, add a card, or move tasks, immediate
     }
   }
 
-  // Stop currently playing audio on barge-in
+  // Stop currently playing audio
   private stopCurrentAudioPlayback(): void {
     for (const source of this.audioQueue) {
       try {
@@ -347,7 +405,6 @@ If the founder asks you to create a ticket, add a card, or move tasks, immediate
     this.isMuted = muted;
   }
 
-  // Disconnect & Clean Up
   disconnect(): void {
     this.cleanup();
   }

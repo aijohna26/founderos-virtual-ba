@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { Venture, VentureStore } from "@/lib/store/ventureStore";
 import { exportBoardToCSV, exportVentureToJSON, exportVentureToMarkdown } from "@/lib/utils/exportUtils";
+import { SHOW_ADVANCED_FEATURES } from "@/lib/config/featureFlags";
 
 export interface TopHeaderProps {
   activeTab: string;
@@ -56,17 +57,26 @@ export function TopHeader({
   const [invited, setInvited] = useState(false);
   const [exportSuccessMsg, setExportSuccessMsg] = useState<string | null>(null);
 
-  const tabs = [
-    { id: "Overview", label: "Overview" },
+  const primaryTabs = [
+    { id: "Today", label: "Today" },
     { id: "Board", label: "Board" },
+    { id: "Standup", label: "Stand-up" },
+    { id: "Retrospective", label: "Retrospective" },
+    { id: "Documents", label: "Documents" },
+  ];
+
+  const advancedTabs = [
     { id: "Strategy", label: "Strategy Map" },
     { id: "Assumptions", label: "Assumptions" },
     { id: "Requirements", label: "Requirements" },
     { id: "Experiments", label: "Experiments" },
     { id: "Roadmap", label: "Roadmap" },
     { id: "Metrics", label: "Metrics" },
-    { id: "Documents", label: "Documents" },
   ];
+
+  const tabs = SHOW_ADVANCED_FEATURES
+    ? [...primaryTabs, ...advancedTabs]
+    : primaryTabs;
 
   return (
     <header className="bg-white border-b border-slate-200/80 sticky top-0 z-20 px-4 sm:px-6 pt-3 sm:pt-5 pb-0 shadow-2xs">
@@ -332,7 +342,7 @@ export function TopHeader({
       {/* Sub-navigation tabs */}
       <div className="flex items-center space-x-1 sm:space-x-4 overflow-x-auto border-t border-slate-100 scrollbar-none pt-1 -mx-4 px-4 sm:mx-0 sm:px-0">
         {tabs.map((tab) => {
-          const isActive = activeTab === tab.id;
+          const isActive = activeTab === tab.id || (tab.id === "Today" && activeTab === "Overview");
           return (
             <button
               key={tab.id}
