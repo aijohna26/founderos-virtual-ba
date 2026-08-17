@@ -88,6 +88,7 @@ export interface Venture {
   problemStatement: string;
   solutionSummary: string;
   strategy: VentureStrategy;
+  standupTime?: string;
   currentSprint?: number;
   sprintStartDate?: string;
   sprintHistory?: SprintRecord[];
@@ -188,7 +189,7 @@ const DEFAULT_VENTURES: Venture[] = [
       },
       {
         id: "fa-3",
-        statement: "Gemini 2.5/3.0 can reliably extract risks and tasks into structured JSON models",
+        statement: "Google Gemini can reliably extract risks and tasks into structured JSON models",
         category: "Technical",
         importance: "High",
         status: "Supported",
@@ -259,9 +260,11 @@ function normalizeColumn(col: any, defaultName: string): { name: string; items: 
 
 function normalizeVenture(v: any): Venture {
   if (!v) return DEFAULT_VENTURES[0];
+  const defaultStandup = v.id === "founderally" ? "09:00 AM" : v.id?.toLowerCase().includes("property") ? "11:00 AM" : "10:00 AM";
   return {
     ...DEFAULT_VENTURES[0],
     ...v,
+    standupTime: v.standupTime || defaultStandup,
     columns: {
       backlog: normalizeColumn(v.columns?.backlog, "BACKLOG"),
       today: normalizeColumn(v.columns?.today, "TODAY"),

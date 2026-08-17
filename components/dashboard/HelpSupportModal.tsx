@@ -48,7 +48,7 @@ export function HelpSupportModal({ isOpen, onClose }: HelpSupportModalProps) {
               <span>How do 2-Way Voice Standups work?</span>
             </div>
             <p className="text-[11px] text-slate-600 leading-relaxed">
-              Click the <strong>Daily Call</strong> button (or unmute the mic in the right AI Co-Pilot panel). Gemini 2.5 Flash will speak aloud, review in-progress tickets, and take live board actions based on your voice.
+              Click the <strong>Daily Call</strong> button (or unmute the mic in the right AI Co-Pilot panel). Google Gemini will speak aloud, review in-progress tickets, and take live board actions based on your voice.
             </p>
           </div>
 

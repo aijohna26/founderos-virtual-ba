@@ -22,6 +22,7 @@ export function SettingsModal({
   const [tagline, setTagline] = useState(venture.tagline);
   const [targetCustomer, setTargetCustomer] = useState(venture.targetCustomer);
   const [problemStatement, setProblemStatement] = useState(venture.problemStatement);
+  const [standupTime, setStandupTime] = useState(venture.standupTime || "09:00 AM");
   const [saved, setSaved] = useState(false);
 
   if (!isOpen) return null;
@@ -34,6 +35,7 @@ export function SettingsModal({
       tagline: tagline.trim() || venture.tagline,
       targetCustomer: targetCustomer.trim() || venture.targetCustomer,
       problemStatement: problemStatement.trim() || venture.problemStatement,
+      standupTime: standupTime.trim() || "09:00 AM",
     };
     VentureStore.updateVenture(updated);
     onUpdateVenture(updated);
@@ -125,6 +127,38 @@ export function SettingsModal({
               onChange={(e) => setTargetCustomer(e.target.value)}
               className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block mb-1.5">
+              Daily Standup Call Schedule
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={standupTime}
+                onChange={(e) => setStandupTime(e.target.value)}
+                placeholder="e.g. 09:00 AM"
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <select
+                onChange={(e) => setStandupTime(e.target.value)}
+                className="px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold bg-slate-50 text-slate-700 cursor-pointer focus:outline-none"
+                defaultValue=""
+              >
+                <option value="" disabled>Presets</option>
+                <option value="08:00 AM">08:00 AM</option>
+                <option value="08:30 AM">08:30 AM</option>
+                <option value="09:00 AM">09:00 AM</option>
+                <option value="09:30 AM">09:30 AM</option>
+                <option value="10:00 AM">10:00 AM</option>
+                <option value="11:00 AM">11:00 AM</option>
+                <option value="05:00 PM">05:00 PM</option>
+              </select>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Time when your AI Business Analyst conducts your daily morning standup check-in.
+            </p>
           </div>
 
           <div>

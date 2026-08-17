@@ -171,6 +171,7 @@ export function Sidebar({
                 <button
                   key={venture.id}
                   onClick={() => setActiveVentureId(venture.id)}
+                  title={`${venture.name} • Standup: ${venture.standupTime || "09:00 AM"}`}
                   className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm font-medium transition-colors ${
                     isSelected
                       ? "bg-slate-100 text-slate-900 font-bold"

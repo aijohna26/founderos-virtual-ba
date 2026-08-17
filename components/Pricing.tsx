@@ -24,7 +24,7 @@ export function Pricing() {
         "Kanban Board & Acceptance Criteria Generator",
         "Export Board to CSV & Executive Markdown PRD",
         "Hypothesis & Assumption Risk Register",
-        "Standard Gemini 2.5 Flash execution speed",
+        "Standard Google Gemini execution speed",
         "Standard Email Support"
       ],
       highlight: false

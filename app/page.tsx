@@ -36,58 +36,54 @@ export default function Home() {
 
       {/* Main Hero Section */}
       <main className="flex-1">
-        <section className="pt-8 pb-16 lg:pt-14 lg:pb-24 overflow-hidden">
+        <section className="pt-3 pb-12 lg:pt-6 lg:pb-16 overflow-hidden">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-8 items-center">
               
               {/* Hero Left Column (Copy & CTAs) */}
-              <div className="lg:col-span-5 space-y-6">
+              <div className="lg:col-span-5 space-y-4 sm:space-y-5">
                 {/* Eyebrow Pill */}
-                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-100/70 border border-blue-200 text-blue-700 font-bold text-xs uppercase tracking-wider shadow-2xs">
-                  <Sparkles className="w-3.5 h-3.5 text-blue-600" />
-                  <span>YOUR AI BUSINESS ANALYST & CO-FOUNDER</span>
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-50 border border-blue-200/80 text-blue-700 font-bold text-xs uppercase tracking-wider shadow-2xs">
+                  <Sparkles className="w-3.5 h-3.5 text-blue-600 fill-blue-600/20" />
+                  <span>AI Business Analyst & Venture Co-Pilot</span>
                 </div>
 
                 {/* Main Headline */}
-                <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black text-slate-900 tracking-tight leading-[1.1]">
+                <h1 className="text-4xl sm:text-5xl lg:text-[54px] font-black text-slate-900 tracking-tight leading-[1.12]">
                   Your AI Business Analyst{" "}
-                  <span className="text-blue-600 block sm:inline">for every founder decision.</span>
+                  <span className="text-blue-600">for every founder decision.</span>
                 </h1>
 
                 {/* Subtitle */}
                 <p className="text-base sm:text-lg text-slate-600 font-normal leading-relaxed">
-                  FounderAlly is your AI Business Analyst and co-pilot. From idea to scale, get clarity on what to build, why it matters, and how to make it succeed.
+                  Stop building features in the dark. FounderAlly runs daily voice standups, manages your Kanban sprints, de-risks critical hypotheses, and drafts executive PRDs powered by Gemini.
                 </p>
 
-                {/* Bullet Points */}
-                <ul className="space-y-3 pt-2 text-sm sm:text-base font-medium text-slate-700">
-                  <li className="flex items-start gap-3">
-                    <CheckCircle2 className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
-                    <span>Ask anything about your idea, market or strategy</span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <CheckCircle2 className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
-                    <span>Get expert analysis, data-backed insights and <strong>reports</strong></span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <CheckCircle2 className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
-                    <span><strong>Validate assumptions</strong> and <strong>reduce risk</strong></span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <CheckCircle2 className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
-                    <span>Build better plans, faster — with AI by your side</span>
-                  </li>
-                </ul>
+                {/* Key Pillars */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-1">
+                  <div className="p-3 rounded-2xl bg-white border border-slate-200/80 shadow-2xs flex flex-col gap-1">
+                    <span className="text-sm font-bold text-blue-600">🎙️ Daily Voice</span>
+                    <span className="text-[11px] text-slate-500 font-medium">Spoken 2-way standup debriefs</span>
+                  </div>
+                  <div className="p-3 rounded-2xl bg-white border border-slate-200/80 shadow-2xs flex flex-col gap-1">
+                    <span className="text-sm font-bold text-purple-600">📋 Kanban Sync</span>
+                    <span className="text-[11px] text-slate-500 font-medium">Autonomous sprint & card updates</span>
+                  </div>
+                  <div className="p-3 rounded-2xl bg-white border border-slate-200/80 shadow-2xs flex flex-col gap-1">
+                    <span className="text-sm font-bold text-emerald-600">📄 PRD Specs</span>
+                    <span className="text-[11px] text-slate-500 font-medium">1-Click strategy & assumption test</span>
+                  </div>
+                </div>
 
                 {/* Action Buttons */}
-                <div className="pt-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
+                <div className="pt-2 flex flex-col sm:flex-row items-stretch sm:items-center gap-3.5">
                   {!mounted ? (
                     <Link
                       href="/sign-up"
                       className="inline-flex items-center justify-center gap-2 px-7 py-4 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-base transition-all shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/35 hover:-translate-y-0.5"
                     >
                       <span>Start 7-Day Free Trial</span>
-                      <Sparkles className="w-4 h-4 fill-white" />
+                      <ArrowRight className="w-4 h-4" />
                     </Link>
                   ) : (
                     <>
@@ -95,7 +91,7 @@ export default function Home() {
                         <SignUpButton mode="modal" fallbackRedirectUrl="/dashboard">
                           <button className="inline-flex items-center justify-center gap-2 px-7 py-4 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-base transition-all shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/35 hover:-translate-y-0.5 cursor-pointer">
                             <span>Start 7-Day Free Trial</span>
-                            <Sparkles className="w-4 h-4 fill-white" />
+                            <ArrowRight className="w-4 h-4" />
                           </button>
                         </SignUpButton>
                       </Show>
@@ -105,8 +101,8 @@ export default function Home() {
                           href="/dashboard"
                           className="inline-flex items-center justify-center gap-2 px-7 py-4 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-base transition-all shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/35 hover:-translate-y-0.5"
                         >
-                          <span>Open AI Analyst Workspace</span>
-                          <Sparkles className="w-4 h-4 fill-white" />
+                          <span>Open Workspace</span>
+                          <ArrowRight className="w-4 h-4" />
                         </Link>
                       </Show>
                     </>
@@ -114,13 +110,28 @@ export default function Home() {
 
                   <a
                     href="#how-it-works"
-                    className="inline-flex items-center justify-center gap-2 px-6 py-4 rounded-full border border-blue-300 hover:border-blue-400 bg-white hover:bg-blue-50/50 text-blue-600 font-bold text-base transition-all shadow-xs"
+                    className="inline-flex items-center justify-center gap-2 px-6 py-4 rounded-full border border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50 text-slate-800 font-bold text-base transition-all shadow-2xs"
                   >
-                    <div className="w-5 h-5 rounded-full border-2 border-blue-600 flex items-center justify-center pl-0.5">
-                      <Play className="w-2.5 h-2.5 fill-blue-600 text-blue-600" />
+                    <div className="w-5 h-5 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center pl-0.5">
+                      <Play className="w-2.5 h-2.5 fill-blue-600" />
                     </div>
-                    <span>See How It Works</span>
+                    <span>How It Works</span>
                   </a>
+                </div>
+
+                {/* Trust Footer */}
+                <div className="flex items-center gap-4 text-xs font-semibold text-slate-500 pt-1">
+                  <span className="flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> 7-Day Free Trial
+                  </span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> Cancel Anytime
+                  </span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> 100% IP Ownership
+                  </span>
                 </div>
               </div>
 
@@ -161,7 +172,7 @@ export default function Home() {
                 </div>
                 <h3 className="text-lg font-bold text-slate-900">Daily Voice Standup</h3>
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  Start your morning talking to Gemini 2.5 Flash. Review sprint velocity, talk through blockers, and brainstorm strategy out loud.
+                  Start your morning talking to Gemini AI. Review sprint velocity, talk through blockers, and brainstorm strategy out loud.
                 </p>
               </div>
 
@@ -224,7 +235,7 @@ export default function Home() {
                     <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center font-bold">🎙️</div>
                     <div>
                       <div className="font-bold text-sm">Morning Founder Standup</div>
-                      <div className="text-xs text-blue-200">Connected with Gemini 2.5 Flash</div>
+                      <div className="text-xs text-blue-200">Connected with Gemini AI</div>
                     </div>
                   </div>
                   <span className="px-2.5 py-1 rounded-full bg-emerald-400/20 text-emerald-300 text-xs font-bold border border-emerald-400/30">Live Audio</span>
@@ -363,7 +374,7 @@ export default function Home() {
               Democratizing Executive Business Analysis for Every Founder
             </h2>
             <p className="text-slate-300 text-base leading-relaxed">
-              FounderAlly was built to give early-stage founders the strategic power of a seasoned Principal Business Analyst and agile co-founder. Powered by Google Gemini 2.5 Flash, FounderAlly bridges the gap between vision, customer validation, and sprint execution.
+              FounderAlly was built to give early-stage founders the strategic power of a seasoned Principal Business Analyst and agile co-founder. Powered by Google Gemini, FounderAlly bridges the gap between vision, customer validation, and sprint execution.
             </p>
             <div className="pt-4">
               <Link

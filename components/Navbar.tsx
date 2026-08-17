@@ -43,13 +43,13 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-50 bg-white/95 backdrop-blur-md border-b border-slate-200/80">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 sm:h-18 flex items-center justify-between">
         {/* Brand Logo */}
         <Link href="/" className="flex items-center gap-2.5 group">
           <img
             src="/founderally-logo.png"
             alt="FounderAlly Logo"
-            className="h-9 sm:h-10 w-auto object-contain group-hover:scale-105 transition-transform"
+            className="h-8 sm:h-9 w-auto object-contain group-hover:scale-105 transition-transform"
           />
         </Link>
 
@@ -224,7 +224,7 @@ export function Navbar() {
                     <Cpu className="w-4 h-4" />
                   </div>
                   <div>
-                    <div className="text-xs font-bold text-slate-900 group-hover:text-blue-600">Gemini 2.5 Flash Architecture</div>
+                    <div className="text-xs font-bold text-slate-900 group-hover:text-blue-600">Google Gemini Architecture</div>
                     <div className="text-[11px] text-slate-500 font-normal">Real-time reasoning & voice engine</div>
                   </div>
                 </Link>
