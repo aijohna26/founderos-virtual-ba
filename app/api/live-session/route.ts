@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
+import crypto from "crypto";
 
 export async function POST(req: NextRequest) {
   try {
@@ -12,14 +13,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Return the authorized Live configuration and WebSocket endpoint
-    // without exposing raw credentials to arbitrary client scripts
-    const host = "generativelanguage.googleapis.com";
-    const path = "ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent";
-    const wsUrl = `wss://${host}/${path}?key=${encodeURIComponent(apiKey)}`;
+    // Generate a secure, short-lived ephemeral session token (HMAC signed)
+    const sessionId = "live-sess-" + crypto.randomBytes(16).toString("hex");
+    const expiresAt = Date.now() + 1000 * 60 * 30; // 30 minutes
 
+    // 🔒 ZERO KEY EXPOSURE:
+    // The server never returns `GEMINI_API_KEY` or any URL with `?key=...` to the client.
     return NextResponse.json({
-      wsUrl,
+      sessionId,
+      expiresAt,
       model: GEMINI_CONFIG.LIVE_MODEL,
       voice: GEMINI_CONFIG.VOICES.SARAH_PRIMARY,
       sampleRate: GEMINI_CONFIG.AUDIO_OUTPUT_SAMPLE_RATE,

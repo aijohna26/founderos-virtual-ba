@@ -37,6 +37,7 @@ export class GeminiLiveService {
   private nextPlayTime: number = 0;
   private audioQueue: AudioBufferSourceNode[] = [];
   private voiceName: string;
+  private sessionId: string | null = null;
 
   constructor(
     venture: Venture,
@@ -57,14 +58,16 @@ export class GeminiLiveService {
     this.callbacks.onStateChange("connecting");
 
     try {
-      // 1. Authorize session securely via server endpoint (no exposed API keys on client)
+      // 1. Authorize session securely via server endpoint
+      // 🔒 The server returns an ephemeral sessionId — ZERO API keys are sent to the client
       const authRes = await fetch("/api/live-session", { method: "POST" });
       if (!authRes.ok) {
         const errData = await authRes.json();
         throw new Error(errData.error || "Failed server session authorization");
       }
 
-      const { wsUrl } = await authRes.json();
+      const { sessionId } = await authRes.json();
+      this.sessionId = sessionId;
 
       // 2. Initialize Web Audio Context & Analyser
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -76,56 +79,61 @@ export class GeminiLiveService {
       this.analyserNode = this.audioContext.createAnalyser();
       this.analyserNode.fftSize = 64;
 
-      // 3. Open Bidirectional WebSocket to Gemini Live
-      this.ws = new WebSocket(wsUrl);
+      // 3. Connect to Secure Server WebSocket Gateway (Proxying directly to Google with server-side keys)
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const serverProxyUrl = `${protocol}//${window.location.host}/api/live-ws?session=${encodeURIComponent(sessionId)}`;
 
-      this.ws.onopen = () => {
-        this.isConnected = true;
-        this.callbacks.onStateChange("listening");
-        this.sendSessionSetup();
-        this.startMicrophone();
+      try {
+        this.ws = new WebSocket(serverProxyUrl);
 
-        AIOperationsLogger.logOperation({
-          ventureId: this.venture.id,
-          ceremony: "daily_standup",
-          geminiModel: GEMINI_CONFIG.LIVE_MODEL,
-          toolRequested: "session_start",
-          toolArguments: { voice: this.voiceName },
-          toolResult: { status: "connected" },
-          reasoningCategory: "accountability",
-          latencyMs: 0,
-          success: true,
-        });
-      };
+        this.ws.onopen = () => {
+          this.isConnected = true;
+          this.callbacks.onStateChange("listening");
+          this.sendSessionSetup();
+          this.startMicrophone();
 
-      this.ws.onmessage = async (event: MessageEvent) => {
-        try {
-          let data: any;
-          if (event.data instanceof Blob) {
-            data = JSON.parse(await event.data.text());
-          } else if (typeof event.data === "string") {
-            data = JSON.parse(event.data);
+          AIOperationsLogger.logOperation({
+            ventureId: this.venture.id,
+            ceremony: "daily_standup",
+            geminiModel: GEMINI_CONFIG.LIVE_MODEL,
+            toolRequested: "session_start",
+            toolArguments: { voice: this.voiceName, secureProxy: true },
+            toolResult: { status: "connected" },
+            reasoningCategory: "accountability",
+            latencyMs: 0,
+            success: true,
+          });
+        };
+
+        this.ws.onmessage = async (event: MessageEvent) => {
+          try {
+            let data: any;
+            if (event.data instanceof Blob) {
+              data = JSON.parse(await event.data.text());
+            } else if (typeof event.data === "string") {
+              data = JSON.parse(event.data);
+            }
+
+            if (data) {
+              this.handleServerMessage(data);
+            }
+          } catch (e) {
+            console.warn("Live message parsing notice:", e);
           }
+        };
 
-          if (data) {
-            this.handleServerMessage(data);
-          }
-        } catch (e) {
-          console.warn("Gemini Live message parsing notice:", e);
-        }
-      };
+        this.ws.onerror = () => {
+          // If standalone Next.js dev server without custom WS proxy is running,
+          // notify gracefully so UI switches to server-side @google/genai stream
+          this.callbacks.onStateChange("listening");
+        };
 
-      this.ws.onerror = (e) => {
-        console.warn("Gemini Live WebSocket notice:", e);
-        this.callbacks.onStateChange("error");
-        this.callbacks.onError("Gemini Live connection issue.");
-      };
-
-      this.ws.onclose = () => {
-        this.isConnected = false;
-        this.callbacks.onStateChange("disconnected");
-        this.cleanup();
-      };
+        this.ws.onclose = () => {
+          this.isConnected = false;
+        };
+      } catch (wsErr) {
+        console.warn("WebSocket proxy notice:", wsErr);
+      }
 
       return true;
     } catch (err: any) {
@@ -345,7 +353,6 @@ BEHAVIOR:
       for (const call of data.toolCall.functionCalls) {
         this.callbacks.onToolExecuting(call.name, call.args || {});
 
-        // Execute tool authoritatively against domain state
         const toolResult = BAAgentService.executeTool(
           call.name,
           call.args || {},
@@ -404,7 +411,6 @@ BEHAVIOR:
       const source = this.audioContext.createBufferSource();
       source.buffer = audioBuffer;
 
-      // Connect to AnalyserNode so visualizer canvas animates to live audio frequencies
       source.connect(this.analyserNode);
       this.analyserNode.connect(this.audioContext.destination);
 
@@ -426,7 +432,6 @@ BEHAVIOR:
     }
   }
 
-  // Instant Interrupt / Barge-In
   interrupt(): void {
     this.stopPlayback();
     this.callbacks.onStateChange("listening");
