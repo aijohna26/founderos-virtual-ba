@@ -14,14 +14,16 @@ import {
   Check,
   Plus,
   Play,
-  RotateCcw
+  RotateCcw,
+  Activity
 } from "lucide-react";
 import { Venture, VentureStore, KanbanCard } from "@/lib/store/ventureStore";
 import { VoiceSphereVisualizer, SARAH_PERSONAS, BusinessPersona, AgentAudioState } from "@/components/dashboard/VoiceSphereVisualizer";
-import { VoiceEngine, VoiceState } from "@/lib/voice/voiceEngine";
+import { GeminiLiveService, LiveSessionState } from "@/lib/agent/geminiLiveService";
 import { StandupPrepEngine } from "@/lib/agent/standupPrepEngine";
-import { BAAgentService } from "@/lib/agent/baAgentService";
-import { MemoryService } from "@/lib/db/memoryService";
+import { CommitmentStore } from "@/lib/store/commitmentStore";
+import { VoiceEngine } from "@/lib/voice/voiceEngine";
+import { AIOperationsLogger } from "@/lib/agent/aiOperationsLog";
 
 export interface StandupTabProps {
   venture: Venture;
@@ -39,11 +41,12 @@ export function StandupTab({
   setActiveTab,
 }: StandupTabProps) {
   const [selectedPersona, setSelectedPersona] = useState<BusinessPersona>(SARAH_PERSONAS[0]);
-  const [audioState, setAudioState] = useState<AgentAudioState>("idle");
+  const [sessionState, setSessionState] = useState<LiveSessionState>("idle");
   const [isMuted, setIsMuted] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");
-  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const pendingTranscriptRef = useRef<string>("");
+  const [activeToolNotice, setActiveToolNotice] = useState<string | null>(null);
+
+  const liveClientRef = useRef<GeminiLiveService | null>(null);
 
   const getColItems = (col: any): KanbanCard[] => {
     if (!col) return [];
@@ -59,171 +62,128 @@ export function StandupTab({
   const backlogCards = getColItems(venture?.columns?.backlog);
   const totalActive = inProgressCards.length + todayCards.length;
 
-  // Initialize Speech Recognition for Live Standup
+  const commitments = CommitmentStore.getOutstandingCommitments(venture.id);
+  const learnings = CommitmentStore.getLearnings(venture.id);
+
+  // Cleanup on unmount
   useEffect(() => {
-    VoiceEngine.preloadVoices();
-    VoiceEngine.initRecognition(
-      (transcript, isFinal) => {
-        if (!transcript.trim()) return;
-
-        setInterimTranscript(transcript);
-        pendingTranscriptRef.current = transcript.trim();
-
-        if (silenceTimerRef.current) {
-          clearTimeout(silenceTimerRef.current);
-        }
-
-        const delay = isFinal ? 600 : 1300;
-        silenceTimerRef.current = setTimeout(() => {
-          if (pendingTranscriptRef.current.trim().length > 0) {
-            const textToSubmit = pendingTranscriptRef.current.trim();
-            pendingTranscriptRef.current = "";
-            setInterimTranscript("");
-
-            // Filter echo loops
-            const lower = textToSubmit.toLowerCase();
-            if (lower === "got it" || lower === "got it." || lower === "i" || lower === "the") {
-              return;
-            }
-
-            handleUserSpokenInput(textToSubmit);
-          }
-        }, delay);
-      },
-      (state) => {
-        setAudioState(state);
-      },
-      (err) => {
-        console.warn("Standup voice engine notice:", err);
-      },
-      () => {
-        // Interrupted callback
-        setAudioState("listening");
+    return () => {
+      if (liveClientRef.current) {
+        liveClientRef.current.disconnect();
       }
+    };
+  }, []);
+
+  const handleStartCall = async () => {
+    if (isDailyCallActive) {
+      // Disconnect
+      if (liveClientRef.current) {
+        liveClientRef.current.disconnect();
+        liveClientRef.current = null;
+      }
+      VoiceEngine.stopSpeaking();
+      VoiceEngine.stopListening();
+      setIsDailyCallActive(false);
+      setSessionState("idle");
+      setInterimTranscript("");
+      setActiveToolNotice(null);
+      return;
+    }
+
+    setIsDailyCallActive(true);
+    setSessionState("connecting");
+
+    // Initialize Gemini Live Service
+    const client = new GeminiLiveService(
+      venture,
+      {
+        onStateChange: (st) => {
+          setSessionState(st);
+        },
+        onTranscript: (sender, text, isFinal) => {
+          if (sender === "user") {
+            setInterimTranscript(text);
+          } else if (sender === "ai" && text) {
+            setInterimTranscript("");
+          }
+        },
+        onToolExecuting: (toolName, args) => {
+          setActiveToolNotice(`Sarah is executing: ${toolName}...`);
+        },
+        onToolExecuted: (toolName, res) => {
+          setActiveToolNotice(null);
+        },
+        onVentureUpdated: (updatedV) => {
+          onUpdateVenture(updatedV);
+        },
+        onError: (err) => {
+          console.warn("Gemini Live notice:", err);
+          // Fallback to HTTP contextual engine if live connection dropped
+          handleFallbackGreeting();
+        },
+      },
+      selectedPersona.voiceName.includes("Kore") ? "Kore" : "Aoede"
     );
 
-    return () => {
-      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-    };
-  }, [venture]);
+    liveClientRef.current = client;
+    const connected = await client.connect();
 
-  // Submit spoken text to Gemini BA Reasoning Engine
-  const handleUserSpokenInput = async (spokenText: string) => {
-    setAudioState("thinking");
-
-    try {
-      const activeMemories = MemoryService.getMemories(venture.id);
-
-      const res = await fetch("/api/ai-analyst", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: spokenText,
-          venture: {
-            id: venture.id,
-            name: venture.name,
-            tagline: venture.tagline,
-            stage: venture.stage,
-            targetCustomer: venture.targetCustomer,
-            problemStatement: venture.problemStatement,
-            assumptions: venture.assumptions,
-            columns: venture.columns,
-            priorities: venture.priorities,
-          },
-          memories: activeMemories,
-          history: (venture.chatHistory || []).slice(-6),
-        }),
-      });
-
-      const data = await res.json();
-      const aiReply = data.reply || `I'm tracking your sprint progress. Let's focus on our primary goal.`;
-
-      // Execute any autonomous tools via BAAgentService
-      let currentVenture: Venture = { ...venture };
-      if (Array.isArray(data.actions) && data.actions.length > 0) {
-        for (const action of data.actions) {
-          const toolRes = BAAgentService.executeTool(action.type, action, currentVenture, "daily_standup");
-          if (toolRes.updatedVenture) {
-            currentVenture = toolRes.updatedVenture;
-          }
-        }
-      }
-
-      onUpdateVenture(currentVenture);
-      VentureStore.updateVenture(currentVenture);
-
-      // Speak response aloud with Google's Kore Neural Voice
-      VoiceEngine.speak(
-        aiReply,
-        selectedPersona.voiceName.includes("Kore") ? "Kore" : "Aoede",
-        () => setAudioState("speaking"),
-        () => {
-          if (isDailyCallActive) {
-            setAudioState("listening");
-            VoiceEngine.startListening();
-          } else {
-            setAudioState("idle");
-          }
-        }
-      );
-    } catch (err) {
-      console.error("Standup voice processing error:", err);
-      setAudioState(isDailyCallActive ? "listening" : "idle");
+    if (!connected) {
+      handleFallbackGreeting();
     }
   };
 
-  const handleStartCall = () => {
-    const nextCall = !isDailyCallActive;
-    setIsDailyCallActive(nextCall);
+  const handleFallbackGreeting = () => {
+    VoiceEngine.unlockAudio();
+    const agenda = StandupPrepEngine.prepareAgenda(venture);
+    setSessionState("speaking");
 
-    if (nextCall) {
-      VoiceEngine.unlockAudio();
-      const agenda = StandupPrepEngine.prepareAgenda(venture);
-      setAudioState("speaking");
-
-      VoiceEngine.speak(
-        agenda.greeting,
-        "Kore",
-        () => setAudioState("speaking"),
-        () => {
-          setAudioState("listening");
-          VoiceEngine.startListening();
-        }
-      );
-    } else {
-      VoiceEngine.stopSpeaking();
-      VoiceEngine.stopListening();
-      setAudioState("idle");
-      setInterimTranscript("");
-    }
+    VoiceEngine.speak(
+      agenda.greeting,
+      "Kore",
+      () => setSessionState("speaking"),
+      () => {
+        setSessionState("listening");
+        VoiceEngine.startListening();
+      }
+    );
   };
 
   const handleInterrupt = () => {
+    if (liveClientRef.current) {
+      liveClientRef.current.interrupt();
+    }
     VoiceEngine.stopSpeaking();
-    setAudioState("listening");
-    VoiceEngine.startListening();
+    setSessionState("listening");
   };
 
   const handleTestVoice = () => {
     VoiceEngine.unlockAudio();
-    setAudioState("speaking");
+    setSessionState("speaking");
     VoiceEngine.speak(
-      `Hello! I'm Sarah Jenkins, your Lead AI Business Analyst. I'm connected with Google's neural voice engine and ready for our daily standup.`,
+      `Hello! I'm Sarah Jenkins, your Lead AI Business Analyst powered by Google Gemini Live. I'm connected and ready for our daily standup.`,
       "Kore",
-      () => setAudioState("speaking"),
-      () => setAudioState("idle")
+      () => setSessionState("speaking"),
+      () => setSessionState("idle")
     );
   };
 
   const handleToggleMute = () => {
     const nextMute = !isMuted;
     setIsMuted(nextMute);
-    if (nextMute) {
-      VoiceEngine.stopListening();
-    } else {
-      VoiceEngine.startListening();
+    if (liveClientRef.current) {
+      liveClientRef.current.setMuted(nextMute);
     }
   };
+
+  const visualizerAudioState: AgentAudioState =
+    sessionState === "speaking"
+      ? "speaking"
+      : sessionState === "thinking" || sessionState === "using_tool"
+      ? "thinking"
+      : sessionState === "listening" || sessionState === "connecting"
+      ? "listening"
+      : "idle";
 
   return (
     <div className="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-200">
@@ -231,16 +191,24 @@ export function StandupTab({
       <VoiceSphereVisualizer
         persona={selectedPersona}
         onSelectPersona={setSelectedPersona}
-        state={audioState}
+        state={visualizerAudioState}
         isCallActive={isDailyCallActive}
         isMuted={isMuted}
         onToggleMute={handleToggleMute}
         onInterrupt={handleInterrupt}
         onStartCall={handleStartCall}
         onTestVoice={handleTestVoice}
-        audioAnalyser={VoiceEngine.getAudioAnalyser()}
+        audioAnalyser={liveClientRef.current?.getAudioAnalyser() || VoiceEngine.getAudioAnalyser()}
         interimTranscript={interimTranscript}
       />
+
+      {/* Active Tool Execution Pill */}
+      {activeToolNotice && (
+        <div className="flex items-center justify-center gap-2 p-2.5 rounded-xl bg-blue-950/80 border border-blue-700 text-xs font-semibold text-blue-200 animate-pulse shadow-lg">
+          <Activity className="w-3.5 h-3.5 text-blue-400" />
+          <span>{activeToolNotice}</span>
+        </div>
+      )}
 
       {/* 2. Stand-up Structure Cards (3 Pillars of the Daily Standup) */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
@@ -373,32 +341,72 @@ export function StandupTab({
         </div>
       </div>
 
-      {/* 3. Sarah's Stand-up Intelligence & Guidelines */}
-      <div className="bg-white rounded-3xl p-6 sm:p-7 border border-slate-200/80 shadow-xs space-y-4">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
-            <Sparkles className="w-4 h-4" />
+      {/* 3. Commitments & Learnings Accountability Log */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+        {/* Outstanding Commitments */}
+        <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-blue-600" />
+              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                Active Commitments ({commitments.length})
+              </h3>
+            </div>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-blue-50 text-blue-700">
+              Sprint Accountability
+            </span>
           </div>
-          <div>
-            <h3 className="text-sm font-bold text-slate-900">
-              Sarah Jenkins &bull; Stand-up Guidelines ({selectedPersona.style})
-            </h3>
-            <p className="text-xs text-slate-500">
-              {selectedPersona.description}
+          {commitments.length === 0 ? (
+            <p className="text-xs text-slate-400 italic py-2">
+              No outstanding commitments. Make a commitment to Sarah during standup!
             </p>
-          </div>
+          ) : (
+            <div className="space-y-2">
+              {commitments.map((c) => (
+                <div
+                  key={c.id}
+                  className="p-2.5 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-between text-xs"
+                >
+                  <span className="font-medium text-slate-800 truncate pr-2">&ldquo;{c.commitment}&rdquo;</span>
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 shrink-0">
+                    {c.deadline || "Today"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
-        <div className="p-4 rounded-2xl bg-slate-50 border border-slate-100 text-xs text-slate-700 leading-relaxed space-y-2">
-          <p>
-            • <strong>Velocity:</strong> {doneCards.length} tickets completed this sprint out of {doneCards.length + totalActive + backlogCards.length} total backlog items.
-          </p>
-          <p>
-            • <strong>Immediate Priority:</strong> Focus on testing the core assumption: <em>&quot;{venture.problemStatement || "Primary customer discovery"}&quot;</em>.
-          </p>
-          <p>
-            • <strong>Live Voice Tip:</strong> Click &quot;Connect Live Voice Standup&quot; above, speak naturally, and if you need to cut in, simply start talking or click <em>&quot;Interrupt Sarah&quot;</em>.
-          </p>
+        {/* Durable Learnings & Behavioral Adaptation */}
+        <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-purple-600" />
+              <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
+                Observed Learnings & Adaptation ({learnings.length})
+              </h3>
+            </div>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-50 text-purple-700">
+              Adaptive Memory
+            </span>
+          </div>
+          {learnings.length === 0 ? (
+            <p className="text-xs text-slate-400 italic py-2">
+              Sarah is observing sprint delivery patterns to personalize future coaching.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {learnings.slice(0, 2).map((l) => (
+                <div
+                  key={l.id}
+                  className="p-2.5 rounded-xl bg-purple-50/50 border border-purple-100 text-xs space-y-1"
+                >
+                  <div className="font-semibold text-purple-900">{l.pattern}</div>
+                  <div className="text-[10px] text-purple-600 font-normal">Coach: {l.suggestedCoachingBehavior}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

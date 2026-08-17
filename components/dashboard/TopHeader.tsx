@@ -22,6 +22,8 @@ import {
 import { Venture, VentureStore } from "@/lib/store/ventureStore";
 import { exportBoardToCSV, exportVentureToJSON, exportVentureToMarkdown } from "@/lib/utils/exportUtils";
 import { SHOW_ADVANCED_FEATURES } from "@/lib/config/featureFlags";
+import { AIOperationsModal } from "@/components/dashboard/AIOperationsModal";
+import { Activity } from "lucide-react";
 
 export interface TopHeaderProps {
   activeTab: string;
@@ -53,6 +55,7 @@ export function TopHeader({
   const [ventureMenuOpen, setVentureMenuOpen] = useState(false);
   const [optionsMenuOpen, setOptionsMenuOpen] = useState(false);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
+  const [aiOpsModalOpen, setAiOpsModalOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [invited, setInvited] = useState(false);
   const [exportSuccessMsg, setExportSuccessMsg] = useState<string | null>(null);
@@ -202,6 +205,16 @@ export function TopHeader({
           >
             <PhoneCall className={`w-3.5 h-3.5 ${isDailyCallActive ? "animate-bounce" : "text-blue-600"}`} />
             <span>{isDailyCallActive ? "End Daily Call" : "Daily Call"}</span>
+          </button>
+
+          {/* AI Operations & Telemetry Modal Button */}
+          <button
+            onClick={() => setAiOpsModalOpen(true)}
+            className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900 hover:bg-slate-800 text-blue-300 font-semibold text-xs transition-colors cursor-pointer border border-slate-700 shadow-xs"
+            title="Inspect AI Operations & Tool Telemetry"
+          >
+            <Activity className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
+            <span>AI Ops</span>
           </button>
 
           {/* Invite Collaborator */}
@@ -440,6 +453,13 @@ export function TopHeader({
           </div>
         </div>
       )}
+
+      {/* AI Operations & Telemetry Modal */}
+      <AIOperationsModal
+        isOpen={aiOpsModalOpen}
+        onClose={() => setAiOpsModalOpen(false)}
+        ventureId={activeVenture.id}
+      />
     </header>
   );
 }
