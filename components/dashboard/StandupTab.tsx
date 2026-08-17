@@ -47,6 +47,7 @@ export function StandupTab({
   const [activeToolNotice, setActiveToolNotice] = useState<string | null>(null);
 
   const liveClientRef = useRef<GeminiLiveService | null>(null);
+  const fallbackActiveRef = useRef(false);
 
   const getColItems = (col: any): KanbanCard[] => {
     if (!col) return [];
@@ -87,9 +88,11 @@ export function StandupTab({
       setSessionState("idle");
       setInterimTranscript("");
       setActiveToolNotice(null);
+      fallbackActiveRef.current = false;
       return;
     }
 
+    fallbackActiveRef.current = false;
     setIsDailyCallActive(true);
     setSessionState("connecting");
 
@@ -118,7 +121,8 @@ export function StandupTab({
         },
         onError: (err) => {
           console.warn("Gemini Live notice:", err);
-          // Fallback to HTTP contextual engine if live connection dropped
+          liveClientRef.current?.disconnect();
+          liveClientRef.current = null;
           handleFallbackGreeting();
         },
       },
@@ -126,14 +130,12 @@ export function StandupTab({
     );
 
     liveClientRef.current = client;
-    const connected = await client.connect();
-
-    if (!connected) {
-      handleFallbackGreeting();
-    }
+    await client.connect();
   };
 
   const handleFallbackGreeting = () => {
+    if (fallbackActiveRef.current) return;
+    fallbackActiveRef.current = true;
     VoiceEngine.unlockAudio();
     const agenda = StandupPrepEngine.prepareAgenda(venture);
     setSessionState("speaking");

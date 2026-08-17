@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
+import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
 
 // Convert 24kHz 1-channel 16-bit PCM buffer to standard WAV format
 function pcmToWav(pcmBuffer: Buffer, sampleRate: number = 24000, numChannels: number = 1): Buffer {
@@ -56,7 +57,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No speakable text" }, { status: 400 });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
 
     // Supported Google Gemini Prebuilt Neural Voices: Kore, Zephyr, Puck, Fenrir, Charon, Aoede
     const selectedVoice = voice || "Kore";
@@ -67,7 +68,7 @@ export async function POST(req: NextRequest) {
         const ai = new GoogleGenAI({ apiKey });
 
         const response = await ai.models.generateContent({
-          model: "gemini-2.0-flash",
+          model: GEMINI_CONFIG.AUDIO_MODEL,
           contents: [{ role: "user", parts: [{ text: `Say in a natural, clear voice: "${cleanText}"` }] }],
           config: {
             responseModalities: ["AUDIO"],
@@ -88,15 +89,17 @@ export async function POST(req: NextRequest) {
               const mimeType = part.inlineData.mimeType || "audio/pcm;rate=24000";
               const rawAudioBuffer = Buffer.from(part.inlineData.data, "base64");
 
-              let returnBuffer: Uint8Array = rawAudioBuffer;
-              let returnMime = mimeType;
+              const isRawPcm = /pcm|l16/i.test(mimeType);
+              const returnBuffer = isRawPcm
+                ? pcmToWav(rawAudioBuffer, GEMINI_CONFIG.AUDIO_OUTPUT_SAMPLE_RATE)
+                : rawAudioBuffer;
+              const returnMime = isRawPcm ? "audio/wav" : mimeType;
 
-              // If Gemini returns raw PCM, wrap in standard WAV header for instant browser playback
               return new NextResponse(returnBuffer as any, {
                 headers: {
                   "Content-Type": returnMime,
                   "Content-Length": returnBuffer.length.toString(),
-                  "Cache-Control": "public, max-age=3600",
+                  "Cache-Control": "no-store, private",
                 },
               });
             }

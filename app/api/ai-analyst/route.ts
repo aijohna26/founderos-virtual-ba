@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
+import { GoogleGenAI, Type, FunctionDeclaration, type GenerateContentResponse } from "@google/genai";
+import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
 
 export interface AIAction {
   type: "create_card" | "move_card" | "add_priority" | "update_assumption" | "record_commitment" | "record_learning" | "update_ticket";
@@ -177,7 +178,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Message is required" }, { status: 400 });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+    const apiKey = process.env.GEMINI_API_KEY;
 
     const formattedMemories =
       memories && memories.length > 0
@@ -245,28 +246,40 @@ ${formattedMemories}`;
           parts: [{ text: message }],
         });
 
-        const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents,
-          config: {
-            systemInstruction,
-            temperature: 0.7,
-            maxOutputTokens: 800,
-            tools: [
-              {
-                functionDeclarations: [
-                  getSprintContextTool,
-                  getTicketTool,
-                  createTicketTool,
-                  updateTicketTool,
-                  moveTicketTool,
-                  recordCommitmentTool,
-                  recordLearningTool,
+        let response: GenerateContentResponse | null = null;
+        let modelUsed = "";
+        let lastModelError: unknown;
+        for (const model of GEMINI_CONFIG.TEXT_MODELS) {
+          try {
+            response = await ai.models.generateContent({
+              model,
+              contents,
+              config: {
+                systemInstruction,
+                maxOutputTokens: 800,
+                tools: [
+                  {
+                    functionDeclarations: [
+                      getSprintContextTool,
+                      getTicketTool,
+                      createTicketTool,
+                      updateTicketTool,
+                      moveTicketTool,
+                      recordCommitmentTool,
+                      recordLearningTool,
+                    ],
+                  },
                 ],
               },
-            ],
-          },
-        });
+            });
+            modelUsed = model;
+            break;
+          } catch (modelError) {
+            lastModelError = modelError;
+            console.warn(`Gemini text model ${model} unavailable; trying the next candidate.`);
+          }
+        }
+        if (!response) throw lastModelError || new Error("No configured Gemini text model was available");
 
         let replyText = response.text || "";
         const actions: AIAction[] = [];
@@ -326,7 +339,7 @@ ${formattedMemories}`;
           return NextResponse.json({
             reply: replyText.trim(),
             actions,
-            modelUsed: "@google/genai (Gemini 2.5 Flash Native Function Calling)",
+            modelUsed,
           });
         }
       } catch (sdkError) {
@@ -343,6 +356,15 @@ ${formattedMemories}`;
       reply = `For ${venture?.name || "your startup"}, I recommend validating a low-friction introductory trial or flat-rate pilot first. That gives you active usage data before locking in pricing tiers.`;
     } else if (lower.includes("what you mean") || lower.includes("explain")) {
       reply = `Our sprint goal is de-risking: "${venture?.problemStatement || "customer validation"}". If a feature doesn't directly validate that assumption, it should stay in the backlog.`;
+    } else if (lower.includes("commit") || lower.startsWith("i'll ") || lower.startsWith("i will ")) {
+      const commitment = message
+        .replace(/^(i(?:\s+will|'ll)\s+|my commitment is\s+|record (my|a) commitment( to)?\s*)/i, "")
+        .trim();
+      actions.push({
+        type: "record_commitment",
+        commitment: commitment || message.trim(),
+      });
+      reply = `I'll record that commitment for the next stand-up: "${commitment || message.trim()}".`;
     } else if (lower.includes("create") || lower.includes("add") || lower.includes("ticket") || lower.includes("task")) {
       const extractedTitle = message
         .replace(/^(please\s+)?(create|add|make)\s+(a\s+)?(new\s+)?(card|ticket|task)\s*(for|called|named)?/i, "")
@@ -357,16 +379,30 @@ ${formattedMemories}`;
       });
       reply = `Done. I've added "${extractedTitle}" to Today's queue with High priority.`;
     } else if (lower.includes("move") || lower.includes("done") || lower.includes("finish") || lower.includes("completed")) {
-      const firstCard = inProgressCards[0] || todayCards[0];
-      if (firstCard) {
+      const requestedTitle = message.match(/move\s+(?:the\s+)?(.+?)\s+to\s+(?:the\s+)?(?:backlog|today|in[ _-]?progress|done|blocked)/i)?.[1]?.trim();
+      const requestedColumn = lower.includes("backlog")
+        ? "backlog"
+        : lower.includes("blocked")
+        ? "blocked"
+        : /in[ _-]?progress/.test(lower)
+        ? "in_progress"
+        : lower.includes("today")
+        ? "today"
+        : "done";
+      const allCards = [...backlogCards, ...todayCards, ...inProgressCards, ...doneCards, ...blockedCards];
+      const selectedCard = requestedTitle
+        ? allCards.find((card) => card.title.toLowerCase() === requestedTitle.toLowerCase()) ||
+          allCards.find((card) => card.title.toLowerCase().includes(requestedTitle.toLowerCase()))
+        : inProgressCards[0] || todayCards[0];
+      if (selectedCard) {
         actions.push({
           type: "move_card",
-          cardTitle: firstCard.title,
-          toColumn: "done",
+          cardTitle: selectedCard.title,
+          toColumn: requestedColumn,
         });
-        reply = `Awesome progress! I've moved "${firstCard.title}" over to Done. What should we tackle next?`;
+        reply = `I'll move "${selectedCard.title}" to ${requestedColumn.replace("_", " ")}.`;
       } else {
-        reply = `I've updated your board. Which ticket would you like me to mark as done?`;
+        reply = `I couldn't resolve that ticket safely. Which exact ticket should I move?`;
       }
     } else {
       reply = `I'm tracking with you. What specific commitment or ticket are we focusing on today for ${venture?.name || "the sprint"}?`;

@@ -1,12 +1,18 @@
 export const GEMINI_CONFIG = {
-  // Official Google GenAI Live Model for real-time bidirectional audio
-  LIVE_MODEL: "models/gemini-2.0-flash-exp",
+  // Current Gemini Developer API model for low-latency bidirectional voice.
+  LIVE_MODEL: "gemini-3.1-flash-live-preview",
 
-  // Core Reasoning Model for multi-turn structured BA analysis
-  TEXT_MODEL: "gemini-2.5-flash",
+  // Requested text-model order. Unsupported/unavailable candidates fall
+  // through so a single model rollout cannot take down the BA.
+  TEXT_MODELS: [
+    "gemini-3.7-flash",
+    "gemini-flash-latest",
+    "gemini-3.1-flash-lite",
+  ] as const,
+  TEXT_MODEL: "gemini-3.7-flash",
 
-  // Audio synthesis model for voice playback
-  AUDIO_MODEL: "gemini-2.0-flash",
+  // Dedicated text-to-speech fallback model (not the Live agent).
+  AUDIO_MODEL: "gemini-3.1-flash-tts-preview",
 
   // Supported Prebuilt Gemini Neural Voices
   VOICES: {

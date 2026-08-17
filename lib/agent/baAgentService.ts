@@ -3,6 +3,7 @@
 import { Venture, VentureStore, KanbanCard } from "@/lib/store/ventureStore";
 import { CommitmentStore, FounderCommitment, LearningPattern } from "@/lib/store/commitmentStore";
 import { AIOperationsLogger } from "@/lib/agent/aiOperationsLog";
+import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
 
 export interface ToolExecutionResult {
   toolName: string;
@@ -77,18 +78,18 @@ export class BAAgentService {
           let foundCard: KanbanCard | null = null;
           let columnFound: string = "";
 
+          const matches: Array<{ card: KanbanCard; column: keyof Venture["columns"] }> = [];
           for (const colKey of Object.keys(currentColumns) as (keyof Venture["columns"])[]) {
             const items = getColItems(currentColumns[colKey]);
-            const match = items.find(
-              (c) =>
-                (ticketId && c.id === ticketId) ||
-                (cardTitle && c.title.toLowerCase().includes(cardTitle.toLowerCase()))
-            );
-            if (match) {
-              foundCard = match;
-              columnFound = colKey;
-              break;
+            for (const card of items) {
+              if ((ticketId && card.id === ticketId) || (cardTitle && card.title.toLowerCase().includes(cardTitle.toLowerCase()))) {
+                matches.push({ card, column: colKey });
+              }
             }
+          }
+          if (matches.length === 1) {
+            foundCard = matches[0].card;
+            columnFound = matches[0].column;
           }
 
           if (foundCard) {
@@ -105,6 +106,13 @@ export class BAAgentService {
                 column: columnFound,
                 description: foundCard.description || "No extended description",
               },
+            };
+          } else if (matches.length > 1) {
+            result = {
+              toolName,
+              success: false,
+              message: `Ticket reference "${ticketId || cardTitle}" is ambiguous; use a stable ticket ID.`,
+              data: { matches: matches.map(({ card, column }) => ({ id: card.id, title: card.title, column })) },
             };
           } else {
             result = {
@@ -223,7 +231,8 @@ export class BAAgentService {
         // 5. move_ticket
         case "move_ticket":
         case "move_card": {
-          const cardTitle = args.cardTitle || args.title || args.ticketId;
+          const ticketId = args.ticketId || args.id;
+          const cardTitle = args.cardTitle || args.title;
           const toColRaw = (args.toColumn || args.column || "done") as keyof Venture["columns"];
           const toCol: keyof Venture["columns"] = [
             "backlog",
@@ -235,20 +244,20 @@ export class BAAgentService {
             ? toColRaw
             : "done";
 
-          let foundCard: KanbanCard | null = null;
-          let fromCol: keyof Venture["columns"] | null = null;
+          const matches: Array<{ card: KanbanCard; column: keyof Venture["columns"] }> = [];
 
           for (const colName of Object.keys(currentColumns) as (keyof Venture["columns"])[]) {
             const items = getColItems(currentColumns[colName]);
-            const match = items.find((c) =>
-              c.title.toLowerCase().includes((cardTitle || "").toLowerCase().slice(0, 10))
-            );
-            if (match) {
-              foundCard = match;
-              fromCol = colName;
-              break;
+            for (const card of items) {
+              const exactId = ticketId && card.id === ticketId;
+              const titleMatch = cardTitle && card.title.toLowerCase().includes(cardTitle.toLowerCase());
+              if (exactId || titleMatch) matches.push({ card, column: colName });
             }
           }
+
+          const uniqueMatch = matches.length === 1 ? matches[0] : null;
+          const foundCard = uniqueMatch?.card || null;
+          const fromCol = uniqueMatch?.column || null;
 
           if (foundCard && fromCol && fromCol !== toCol) {
             const updatedFrom = getColItems(currentColumns[fromCol]).filter(
@@ -286,11 +295,18 @@ export class BAAgentService {
               success: true,
               message: `Ticket "${foundCard.title}" is already in ${toCol.toUpperCase()}`,
             };
+          } else if (matches.length > 1) {
+            result = {
+              toolName,
+              success: false,
+              message: `Ticket reference "${ticketId || cardTitle}" is ambiguous; use a stable ticket ID.`,
+              data: { matches: matches.map(({ card, column }) => ({ id: card.id, title: card.title, column })) },
+            };
           } else {
             result = {
               toolName,
               success: false,
-              message: `Could not find ticket matching "${cardTitle}" to move to ${toCol.toUpperCase()}`,
+              message: `Could not find ticket matching "${ticketId || cardTitle}" to move to ${toCol.toUpperCase()}`,
             };
           }
           break;
@@ -355,13 +371,13 @@ export class BAAgentService {
       };
     }
 
-    const latencyMs = Date.now() - startTime;
+    const latencyMs = Math.max(1, Date.now() - startTime);
 
     // Log operation for auditable verification
     AIOperationsLogger.logOperation({
       ventureId: venture.id,
       ceremony,
-      geminiModel: "gemini-2.5-flash",
+      geminiModel: GEMINI_CONFIG.TEXT_MODEL,
       toolRequested: toolName,
       toolArguments: args,
       toolResult: result,

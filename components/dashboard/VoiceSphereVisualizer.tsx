@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { Mic, MicOff, Square, Sparkles, Volume2, Radio, Volume1, ShieldCheck, UserCheck, Settings2 } from "lucide-react";
+import { Mic, MicOff, PhoneOff, Square, Sparkles, Volume2, Radio, Volume1, ShieldCheck, UserCheck, Settings2 } from "lucide-react";
 
 export type AgentAudioState = "idle" | "listening" | "thinking" | "speaking" | "paused";
 
@@ -380,6 +380,14 @@ export const VoiceSphereVisualizer: React.FC<VoiceSphereVisualizerProps> = ({
             >
               <Volume1 className="w-3.5 h-3.5 text-cyan-400" />
               <span>Test Audio</span>
+            </button>
+            <button
+              onClick={onStartCall}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-rose-950/70 hover:bg-rose-900 border border-rose-700 text-xs font-semibold text-rose-200 transition-colors cursor-pointer"
+              title="End this stand-up session"
+            >
+              <PhoneOff className="w-3.5 h-3.5" />
+              <span>End Standup</span>
             </button>
           </div>
         )}

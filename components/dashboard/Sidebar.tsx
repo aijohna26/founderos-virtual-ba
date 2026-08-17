@@ -18,12 +18,12 @@ import {
   Settings,
   HelpCircle,
   ChevronRight,
-  ChevronDown,
   Zap,
   X,
-  Sparkles
+  Sparkles,
+  LogOut
 } from "lucide-react";
-import { UserButton, useUser } from "@clerk/nextjs";
+import { SignOutButton, UserButton, useUser } from "@clerk/nextjs";
 import { Venture } from "@/lib/store/ventureStore";
 import { SHOW_ADVANCED_FEATURES } from "@/lib/config/featureFlags";
 
@@ -314,7 +314,25 @@ export function Sidebar({
               </p>
             </div>
           </div>
-          <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+          {user ? (
+            <SignOutButton redirectUrl="/">
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-semibold text-slate-500 transition-colors hover:bg-rose-50 hover:text-rose-600"
+                title="Sign out of FounderAlly"
+              >
+                <LogOut className="h-3.5 w-3.5" />
+                <span>Sign out</span>
+              </button>
+            </SignOutButton>
+          ) : (
+            <Link
+              href="/sign-in"
+              className="rounded-lg px-2 py-1 text-[11px] font-semibold text-blue-600 hover:bg-blue-50"
+            >
+              Sign in
+            </Link>
+          )}
         </div>
       </div>
     </div>

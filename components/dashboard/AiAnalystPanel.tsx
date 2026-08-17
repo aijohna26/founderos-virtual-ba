@@ -19,13 +19,13 @@ import {
   X,
   Clock,
   Calendar,
-  Radio
+  Radio,
+  Trash2
 } from "lucide-react";
-import { Venture, VentureStore, ChatMessage, KanbanCard } from "@/lib/store/ventureStore";
+import { Venture, VentureStore, ChatMessage } from "@/lib/store/ventureStore";
 import { VoiceEngine, VoiceState } from "@/lib/voice/voiceEngine";
-import { GeminiLiveClient } from "@/lib/voice/geminiLiveClient";
 import { MemoryService, MemoryFact } from "@/lib/db/memoryService";
-import { BAAgentService } from "@/lib/agent/baAgentService";
+import { BAAgentService, type ToolExecutionResult } from "@/lib/agent/baAgentService";
 
 export interface AiAnalystPanelProps {
   isDailyCallActive: boolean;
@@ -59,7 +59,6 @@ export function AiAnalystPanel({
   const [memories, setMemories] = useState<MemoryFact[]>([]);
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const latestMsgRef = useRef<HTMLDivElement>(null);
-  const liveClientRef = useRef<GeminiLiveClient | null>(null);
 
   const messages = venture?.chatHistory || [
     {
@@ -245,21 +244,28 @@ export function AiAnalystPanel({
         `I've analyzed your input for ${venture.name}. Let's prioritize validating your core hypothesis.`;
 
       let currentVenture: Venture = { ...venture };
+      const toolResults: ToolExecutionResult[] = [];
 
       if (Array.isArray(data.actions) && data.actions.length > 0) {
         for (const action of data.actions) {
           const toolName = action.type;
           const execRes = BAAgentService.executeTool(toolName, action, currentVenture, "daily_standup");
+          toolResults.push(execRes);
           if (execRes.updatedVenture) {
             currentVenture = execRes.updatedVenture;
           }
         }
       }
 
+      const failedTool = toolResults.find((result) => !result.success);
+      const confirmedReplyText = failedTool
+        ? `I couldn't complete that action: ${failedTool.message}`
+        : aiReplyText;
+
       const aiMsg: ChatMessage = {
         id: "ai-" + Date.now(),
         sender: "ai",
-        text: aiReplyText,
+        text: confirmedReplyText,
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       };
 
@@ -290,7 +296,7 @@ export function AiAnalystPanel({
       // Speak response aloud if voice audio is enabled and Daily Call is active
       if (voiceAudioEnabled) {
         VoiceEngine.speak(
-          aiReplyText,
+          confirmedReplyText,
           () => setIsSpeakingAI(true),
           () => setIsSpeakingAI(false)
         );
@@ -333,63 +339,11 @@ export function AiAnalystPanel({
     }
   };
 
-  const handleLiveToolCall = (name: string, args: Record<string, any>) => {
-    let currentColumns = { ...venture.columns };
-    if (name === "create_card" && args.title) {
-      const colKey = (args.column || "today") as keyof Venture["columns"];
-      const newCard: KanbanCard = {
-        id: "c-live-" + Date.now(),
-        title: args.title,
-        category: args.category || "Feature",
-        priority: args.priority || "High",
-        owner: "YOU",
-      };
-      const existing = currentColumns[colKey]?.items || [];
-      currentColumns = {
-        ...currentColumns,
-        [colKey]: { ...currentColumns[colKey], items: [...existing, newCard] },
-      };
-      const updated = { ...venture, columns: currentColumns };
-      VentureStore.updateVenture(updated);
-      onUpdateVenture(updated);
-    } else if (name === "move_card" && args.cardTitle && args.toColumn) {
-      const toCol = args.toColumn as keyof Venture["columns"];
-      let foundCard: KanbanCard | null = null;
-      let fromCol: keyof Venture["columns"] | null = null;
-      for (const colName of Object.keys(currentColumns) as (keyof Venture["columns"])[]) {
-        const match = currentColumns[colName]?.items?.find((c) =>
-          c.title.toLowerCase().includes(args.cardTitle.toLowerCase().slice(0, 10))
-        );
-        if (match) {
-          foundCard = match;
-          fromCol = colName;
-          break;
-        }
-      }
-      if (foundCard && fromCol && fromCol !== toCol) {
-        const updatedFrom = (currentColumns[fromCol]?.items || []).filter((c) => c.id !== foundCard!.id);
-        const updatedTo = [...(currentColumns[toCol]?.items || []), { ...foundCard, completed: toCol === "done" }];
-        currentColumns = {
-          ...currentColumns,
-          [fromCol]: { ...currentColumns[fromCol], items: updatedFrom },
-          [toCol]: { ...currentColumns[toCol], items: updatedTo },
-        };
-        const updated = { ...venture, columns: currentColumns };
-        VentureStore.updateVenture(updated);
-        onUpdateVenture(updated);
-      }
-    }
-  };
-
   const toggleCall = () => {
     const nextCall = !isDailyCallActive;
     setIsDailyCallActive(nextCall);
 
     if (!nextCall) {
-      if (liveClientRef.current) {
-        liveClientRef.current.disconnect();
-        liveClientRef.current = null;
-      }
       VoiceEngine.stopSpeaking();
       VoiceEngine.stopListening();
       setIsSpeakingAI(false);
@@ -410,6 +364,22 @@ export function AiAnalystPanel({
         () => setIsSpeakingAI(false)
       );
     }
+  };
+
+  const clearChat = () => {
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    pendingTranscriptRef.current = "";
+    VoiceEngine.stopSpeaking();
+    setInputVal("");
+    setIsTyping(false);
+    setIsSpeakingAI(false);
+
+    const updatedVenture: Venture = { ...venture, chatHistory: [] };
+    VentureStore.updateVenture(updatedVenture);
+    onUpdateVenture(updatedVenture);
   };
 
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -479,6 +449,16 @@ export function AiAnalystPanel({
         </div>
 
         <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={clearChat}
+            className="inline-flex items-center gap-1 rounded-lg px-1.5 py-1 text-[10px] font-semibold text-slate-500 transition-colors hover:bg-rose-50 hover:text-rose-600"
+            title="Clear this venture's chat history"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            <span>Clear chat</span>
+          </button>
+
           {/* Memory Drawer button */}
           <button
             onClick={() => setShowMemoryModal(true)}

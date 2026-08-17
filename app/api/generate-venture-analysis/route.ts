@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
 
 export async function POST(req: NextRequest) {
   try {
@@ -112,13 +113,7 @@ CRITICAL RULES:
 }`;
 
     if (apiKey && apiKey.trim().length > 0) {
-      // Google's newest, ultra-fast, lowest-cost production models ($0.075 - $0.10 / 1M tokens)
-      const modelCandidates = [
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-8b"
-      ];
+      const modelCandidates = GEMINI_CONFIG.TEXT_MODELS;
 
       for (const model of modelCandidates) {
         try {
@@ -129,10 +124,7 @@ CRITICAL RULES:
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               contents: [{ role: "user", parts: [{ text: prompt }] }],
-              generationConfig: {
-                temperature: 0.4,
-                responseMimeType: "application/json",
-              },
+              generationConfig: { responseMimeType: "application/json" },
             }),
           });
 

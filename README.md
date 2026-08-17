@@ -10,7 +10,10 @@ FounderAlly transforms startup building by pairing solo founders with **Sarah Je
 
 ```mermaid
 flowchart TD
-    Founder([🎙️ Solo Founder]) <-->|Real-Time 16kHz Audio In / 24kHz Audio Out| GeminiLive[⚡ Persistent Gemini Live Session\nmodels/gemini-2.0-flash-exp]
+    Founder([🎙️ Solo Founder]) -->|Request Live session| TokenRoute[🔐 Next.js /api/live-session]
+    TokenRoute -->|Permanent key, server-side only| TokenService[Google ephemeral token service]
+    TokenService -->|One-use constrained token| Founder
+    Founder <-->|Real-time 16kHz PCM in / 24kHz PCM out| GeminiLive[⚡ Persistent Gemini Live Session\ngemini-3.1-flash-live-preview]
     
     GeminiLive -->|1. Reason over venture & sprint context| ReasoningEngine[🧠 Business Reasoning]
     GeminiLive -->|2. Native Function Calls| ToolRouter[🔧 Tool Execution Router]
@@ -37,9 +40,10 @@ flowchart TD
 ## 🌟 Key Capabilities
 
 ### 1. Real-Time Bidirectional Voice Agent (`GeminiLiveService`)
-- Runs over a persistent full-duplex WebSocket connection (`ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent`).
+- Uses `@google/genai` `ai.live.connect()` with a one-use, short-lived token constrained by the server to the configured Live model and session configuration.
 - Native 16kHz PCM audio streaming with Google's **`Kore`** and **`Aoede`** expressive neural voices.
 - Natural barge-in interruption: when the founder speaks mid-sentence, playback halts and the agent answers.
+- If token provisioning, microphone access, or Live transport fails, the UI switches to the existing browser speech recognition → `/api/ai-analyst` → TTS/browser voice path.
 
 ### 2. The 7 Authoritative MVP Tools
 1. `get_sprint_context` — Retrieves current sprint goal, board columns, active commitments, and completion rate.
@@ -55,8 +59,8 @@ flowchart TD
 - Opens stand-ups with substantive, goal-oriented observations rather than generic greetings.
 
 ### 4. Adaptation & Behavioral Coaching
-- Automatically identifies delivery patterns (e.g. *"Customer outreach carried over 3 times while secondary UI work completed"*).
-- Adjusts future coaching advice to keep the founder focused on customer validation and de-risking.
+- Persists explicit learnings and founder commitments in browser storage.
+- Injects those persisted facts and learnings into later Live-session instructions so they influence future coaching.
 
 ### 5. Auditable AI Operations & Telemetry
 - Inspect live tool executions, latency benchmarks, success rates, and Gemini models via the **AI Ops** telemetry dashboard.
@@ -89,6 +93,10 @@ SHOW_ADVANCED_FEATURES=false
 NEXT_PUBLIC_SHOW_ADVANCED_FEATURES=false
 ```
 
+Do not define or use `NEXT_PUBLIC_GEMINI_API_KEY`. The permanent Gemini credential must never be compiled into browser JavaScript. The configured key must be a Gemini Developer API key authorized to create ephemeral Live tokens; an OAuth token or unsupported credential will be rejected.
+
+Model configuration is centralized in `lib/config/geminiConfig.ts`. Live audio uses `gemini-3.1-flash-live-preview`. Text requests try `gemini-3.7-flash`, `gemini-flash-latest`, then `gemini-3.1-flash-lite`. TTS fallback uses the dedicated `gemini-3.1-flash-tts-preview` model; text-only Flash models cannot replace a Live or TTS model.
+
 ### 3. Run Development Server
 ```bash
 npm run dev
@@ -104,12 +112,16 @@ Open [http://localhost:3000](http://localhost:3000) to access the dashboard.
 3. **Founder**: *"I spent yesterday polishing the dashboard animations."*
 4. **Sarah**: Challenges the distraction against the sprint goal (*"Our sprint goal is customer validation. Dashboard animations aren't helping us reach it right now. I recommend moving that ticket back to the backlog."*)
 5. **Founder**: *"Yeah, do it."*
-6. **Sarah**: Calls `move_ticket`, moves the task to the Backlog visibly on the board, and continues: *"Done. You still have six prospective customers left. What are you committing to before tomorrow?"*
+6. **Sarah**: Calls `move_ticket`. FounderAlly changes the board and sends the authoritative result back through `session.sendToolResponse(...)`; only then should Sarah confirm the move and continue.
 7. **Founder**: *"I'll contact all six."*
 8. **Sarah**: Calls `record_commitment` and records it for tomorrow's stand-up.
 
 ---
 
 ## 🔒 Security & Best Practices
-- **Zero Exposed Keys**: Client connects via secure server-mediated session token endpoints (`/api/live-session`). The raw `GEMINI_API_KEY` is strictly protected server-side.
+- **No permanent key in the browser**: `/api/live-session` exchanges the server-only `GEMINI_API_KEY` for a one-use, short-lived Gemini credential. The ephemeral credential is expected to be visible to the browser; the permanent key is not.
 - **Graceful Fallbacks**: If WebSocket streaming is unavailable, the application automatically falls back to the HTTP contextual engine.
+
+## Persistence and current scope
+
+Venture state, commitments, learnings, and AI Ops events currently persist in browser `localStorage`; memory facts optionally mirror to Supabase. They survive refresh in the same browser profile but are not yet guaranteed to synchronize across devices. Documents remain in the primary navigation. Strategy, Assumptions, Requirements, Experiments, Metrics, and Roadmap remain behind `SHOW_ADVANCED_FEATURES`.

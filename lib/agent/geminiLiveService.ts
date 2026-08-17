@@ -1,8 +1,12 @@
 "use client";
 
-import { Venture, VentureStore } from "@/lib/store/ventureStore";
+import { GoogleGenAI, type LiveServerMessage, type Session } from "@google/genai";
+import { Venture } from "@/lib/store/ventureStore";
 import { BAAgentService, ToolExecutionResult } from "@/lib/agent/baAgentService";
 import { AIOperationsLogger } from "@/lib/agent/aiOperationsLog";
+import { CommitmentStore } from "@/lib/store/commitmentStore";
+import { MemoryService } from "@/lib/db/memoryService";
+import { buildGeminiLiveConfig } from "@/lib/agent/geminiLiveConfig";
 import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
 
 export type LiveSessionState =
@@ -18,26 +22,39 @@ export type LiveSessionState =
 export interface GeminiLiveServiceCallbacks {
   onStateChange: (state: LiveSessionState) => void;
   onTranscript: (sender: "user" | "ai", text: string, isFinal: boolean) => void;
-  onToolExecuting: (toolName: string, args: Record<string, any>) => void;
+  onToolExecuting: (toolName: string, args: Record<string, unknown>) => void;
   onToolExecuted: (toolName: string, result: ToolExecutionResult) => void;
   onVentureUpdated: (venture: Venture) => void;
   onError: (error: string) => void;
 }
 
+interface LiveSessionAuthorization {
+  token: string;
+  expiresAt: string;
+  newSessionExpiresAt: string;
+  model: string;
+  voice: string;
+  sampleRate: number;
+}
+
 export class GeminiLiveService {
-  private ws: WebSocket | null = null;
-  private audioContext: AudioContext | null = null;
+  private session: Session | null = null;
+  private outputAudioContext: AudioContext | null = null;
+  private captureAudioContext: AudioContext | null = null;
   private analyserNode: AnalyserNode | null = null;
   private mediaStream: MediaStream | null = null;
+  private microphoneSource: MediaStreamAudioSourceNode | null = null;
   private scriptProcessor: ScriptProcessorNode | null = null;
-  private isConnected: boolean = false;
-  private isMuted: boolean = false;
+  private isConnected = false;
+  private isMuted = false;
+  private isDisconnecting = false;
+  private fallbackSignaled = false;
+  private connectStartedAt = 0;
   private venture: Venture;
-  private callbacks: GeminiLiveServiceCallbacks;
-  private nextPlayTime: number = 0;
+  private readonly callbacks: GeminiLiveServiceCallbacks;
+  private nextPlayTime = 0;
   private audioQueue: AudioBufferSourceNode[] = [];
-  private voiceName: string;
-  private sessionId: string | null = null;
+  private readonly voiceName: string;
 
   constructor(
     venture: Venture,
@@ -53,285 +70,156 @@ export class GeminiLiveService {
     return this.analyserNode;
   }
 
-  // Connect to persistent Gemini Live Session via Secure Server Endpoint
   async connect(): Promise<boolean> {
+    this.connectStartedAt = performance.now();
     this.callbacks.onStateChange("connecting");
+    this.isDisconnecting = false;
+    this.fallbackSignaled = false;
 
     try {
-      // 1. Authorize session securely via server endpoint
-      // 🔒 The server returns an ephemeral sessionId — ZERO API keys are sent to the client
-      const authRes = await fetch("/api/live-session", { method: "POST" });
-      if (!authRes.ok) {
-        const errData = await authRes.json();
-        throw new Error(errData.error || "Failed server session authorization");
+      const context = {
+        venture: this.venture,
+        commitments: CommitmentStore.getOutstandingCommitments(this.venture.id),
+        learnings: CommitmentStore.getLearnings(this.venture.id),
+        memories: MemoryService.getMemories(this.venture.id),
+        voiceName: this.voiceName,
+      };
+      const authRes = await fetch("/api/live-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+        body: JSON.stringify(context),
+      });
+      const auth = (await authRes.json()) as LiveSessionAuthorization & { error?: string };
+      if (!authRes.ok || !auth.token) {
+        throw new Error(auth.error || "Failed to provision a Gemini Live token");
       }
 
-      const { sessionId } = await authRes.json();
-      this.sessionId = sessionId;
-
-      // 2. Initialize Web Audio Context & Analyser
-      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-      this.audioContext = new AudioCtx({ sampleRate: 24000 });
-      if (this.audioContext.state === "suspended") {
-        await this.audioContext.resume();
+      const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      this.outputAudioContext = new AudioCtx({ sampleRate: GEMINI_CONFIG.AUDIO_OUTPUT_SAMPLE_RATE });
+      if (this.outputAudioContext.state === "suspended") {
+        await this.outputAudioContext.resume();
       }
-
-      this.analyserNode = this.audioContext.createAnalyser();
+      this.analyserNode = this.outputAudioContext.createAnalyser();
       this.analyserNode.fftSize = 64;
+      this.analyserNode.connect(this.outputAudioContext.destination);
 
-      // 3. Connect to Secure Server WebSocket Gateway (Proxying directly to Google with server-side keys)
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const serverProxyUrl = `${protocol}//${window.location.host}/api/live-ws?session=${encodeURIComponent(sessionId)}`;
-
-      try {
-        this.ws = new WebSocket(serverProxyUrl);
-
-        this.ws.onopen = () => {
-          this.isConnected = true;
-          this.callbacks.onStateChange("listening");
-          this.sendSessionSetup();
-          this.startMicrophone();
-
-          AIOperationsLogger.logOperation({
-            ventureId: this.venture.id,
-            ceremony: "daily_standup",
-            geminiModel: GEMINI_CONFIG.LIVE_MODEL,
-            toolRequested: "session_start",
-            toolArguments: { voice: this.voiceName, secureProxy: true },
-            toolResult: { status: "connected" },
-            reasoningCategory: "accountability",
-            latencyMs: 0,
-            success: true,
-          });
-        };
-
-        this.ws.onmessage = async (event: MessageEvent) => {
-          try {
-            let data: any;
-            if (event.data instanceof Blob) {
-              data = JSON.parse(await event.data.text());
-            } else if (typeof event.data === "string") {
-              data = JSON.parse(event.data);
+      const ai = new GoogleGenAI({
+        apiKey: auth.token,
+        httpOptions: { apiVersion: "v1alpha" },
+      });
+      this.session = await ai.live.connect({
+        model: auth.model,
+        config: buildGeminiLiveConfig(context),
+        callbacks: {
+          onopen: () => {
+            this.isConnected = true;
+          },
+          onmessage: (message) => this.handleServerMessage(message),
+          onerror: (event) => {
+            const detail = event.message || "Gemini Live connection error";
+            this.signalFallback(detail);
+          },
+          onclose: (event) => {
+            this.isConnected = false;
+            if (!this.isDisconnecting) {
+              this.signalFallback(event.reason || "Gemini Live connection closed unexpectedly");
             }
+          },
+        },
+      });
 
-            if (data) {
-              this.handleServerMessage(data);
-            }
-          } catch (e) {
-            console.warn("Live message parsing notice:", e);
-          }
-        };
+      await this.startMicrophone();
+      this.callbacks.onStateChange("listening");
+      AIOperationsLogger.logOperation({
+        ventureId: this.venture.id,
+        ceremony: "daily_standup",
+        geminiModel: auth.model,
+        toolRequested: "live_session_start",
+        toolArguments: { voice: this.voiceName, auth: "ephemeral_token" },
+        toolResult: { status: "connected", expiresAt: auth.expiresAt },
+        reasoningCategory: "accountability",
+        latencyMs: Math.max(1, Math.round(performance.now() - this.connectStartedAt)),
+        success: true,
+      });
 
-        this.ws.onerror = () => {
-          // If standalone Next.js dev server without custom WS proxy is running,
-          // notify gracefully so UI switches to server-side @google/genai stream
-          this.callbacks.onStateChange("listening");
-        };
-
-        this.ws.onclose = () => {
-          this.isConnected = false;
-        };
-      } catch (wsErr) {
-        console.warn("WebSocket proxy notice:", wsErr);
-      }
-
+      this.session.sendClientContent({
+        turns: [{
+          role: "user",
+          parts: [{ text: "Start the stand-up now with the single most important observation from the supplied sprint context." }],
+        }],
+        turnComplete: true,
+      });
       return true;
-    } catch (err: any) {
-      console.error("Failed starting Gemini Live session:", err);
-      this.callbacks.onStateChange("error");
-      this.callbacks.onError(err.message || "Failed to connect to Live session");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to connect to Gemini Live";
+      this.signalFallback(message);
+      this.cleanup();
       return false;
     }
   }
 
-  // Send Initial Setup with the 7 MVP Formal Tool Declarations
-  private sendSessionSetup(): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-
-    const setupPayload = {
-      setup: {
-        model: GEMINI_CONFIG.LIVE_MODEL,
-        generationConfig: {
-          responseModalities: ["AUDIO"],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: {
-                voiceName: this.voiceName,
-              },
-            },
-          },
-        },
-        systemInstruction: {
-          parts: [
-            {
-              text: `You are Sarah Jenkins, the Lead AI Business Analyst for "${this.venture.name}".
-ROLE: You facilitate the daily sprint stand-up with the founder.
-SPRINT GOAL: "${this.venture.problemStatement || "Validate primary customer demand"}".
-BEHAVIOR:
-- Be concise (1-3 spoken sentences), sharp, focused on sprint goals, and challenging when the founder gets distracted by low-priority work.
-- When the founder commits to something, requests a ticket move, creates work, or reflects on learnings, CALL THE APPROPRIATE NATIVE TOOL IMMEDIATELY.
-- When you receive tool execution results, CONTINUE SPEAKING NATURALLY to confirm and set next actions.`,
-            },
-          ],
-        },
-        tools: [
-          {
-            functionDeclarations: [
-              {
-                name: "get_sprint_context",
-                description: "Retrieves authoritative current sprint status, board state, commitments, and sprint goals.",
-                parameters: { type: "OBJECT", properties: {} },
-              },
-              {
-                name: "get_ticket",
-                description: "Retrieves authoritative details for a specific card/ticket by ID or title substring.",
-                parameters: {
-                  type: "OBJECT",
-                  properties: { cardTitle: { type: "STRING", description: "Card title or ID" } },
-                  required: ["cardTitle"],
-                },
-              },
-              {
-                name: "create_ticket",
-                description: "Creates a new task or experiment on the Kanban board.",
-                parameters: {
-                  type: "OBJECT",
-                  properties: {
-                    title: { type: "STRING", description: "Ticket title" },
-                    column: { type: "STRING", enum: ["backlog", "today", "in_progress", "done", "blocked"] },
-                    category: { type: "STRING", enum: ["Feature", "Growth", "Experiment", "Research", "Technical", "Design", "Legal"] },
-                    priority: { type: "STRING", enum: ["High", "Medium", "Low"] },
-                    reason: { type: "STRING", description: "Why this ticket matters towards the sprint goal" },
-                  },
-                  required: ["title"],
-                },
-              },
-              {
-                name: "update_ticket",
-                description: "Updates or refines an existing ticket (acceptance criteria, description, priority).",
-                parameters: {
-                  type: "OBJECT",
-                  properties: {
-                    cardTitle: { type: "STRING", description: "Ticket title to update" },
-                    description: { type: "STRING", description: "Updated description" },
-                    priority: { type: "STRING", enum: ["High", "Medium", "Low"] },
-                  },
-                  required: ["cardTitle"],
-                },
-              },
-              {
-                name: "move_ticket",
-                description: "Moves an existing ticket between columns (e.g. to 'done', 'backlog', 'today', 'blocked').",
-                parameters: {
-                  type: "OBJECT",
-                  properties: {
-                    cardTitle: { type: "STRING", description: "Card title or substring" },
-                    toColumn: { type: "STRING", enum: ["backlog", "today", "in_progress", "done", "blocked"] },
-                  },
-                  required: ["cardTitle", "toColumn"],
-                },
-              },
-              {
-                name: "record_commitment",
-                description: "Records an explicit daily commitment made by the founder for stand-up accountability.",
-                parameters: {
-                  type: "OBJECT",
-                  properties: {
-                    commitment: { type: "STRING", description: "The commitment text" },
-                    deadline: { type: "STRING", description: "Target deadline (e.g. 'End of Day')" },
-                  },
-                  required: ["commitment"],
-                },
-              },
-              {
-                name: "record_learning",
-                description: "Stores durable retrospective learnings and recurring behavioral patterns.",
-                parameters: {
-                  type: "OBJECT",
-                  properties: {
-                    pattern: { type: "STRING", description: "Observed behavioral pattern or customer insight" },
-                    evidence: { type: "STRING", description: "Supporting evidence" },
-                  },
-                  required: ["pattern"],
-                },
-              },
-            ],
-          },
-        ],
+  private async startMicrophone(): Promise<void> {
+    this.mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
       },
+    });
+
+    const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    this.captureAudioContext = new AudioCtx();
+    if (this.captureAudioContext.state === "suspended") {
+      await this.captureAudioContext.resume();
+    }
+    this.microphoneSource = this.captureAudioContext.createMediaStreamSource(this.mediaStream);
+    this.scriptProcessor = this.captureAudioContext.createScriptProcessor(2048, 1, 1);
+    const inputSampleRate = this.captureAudioContext.sampleRate;
+
+    this.scriptProcessor.onaudioprocess = (event) => {
+      if (!this.isConnected || this.isMuted || !this.session) return;
+      const mono = event.inputBuffer.getChannelData(0);
+      const resampled = this.resample(mono, inputSampleRate, GEMINI_CONFIG.AUDIO_INPUT_SAMPLE_RATE);
+      const pcm16 = new Int16Array(resampled.length);
+      for (let i = 0; i < resampled.length; i++) {
+        const sample = Math.max(-1, Math.min(1, resampled[i]));
+        pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+      }
+      this.session.sendRealtimeInput({
+        audio: {
+          data: this.arrayBufferToBase64(pcm16.buffer),
+          mimeType: `audio/pcm;rate=${GEMINI_CONFIG.AUDIO_INPUT_SAMPLE_RATE}`,
+        },
+      });
     };
 
-    this.ws.send(JSON.stringify(setupPayload));
+    this.microphoneSource.connect(this.scriptProcessor);
+    this.scriptProcessor.connect(this.captureAudioContext.destination);
   }
 
-  // Stream Microphone Audio as 16kHz PCM (Linear 16-bit Mono)
-  private async startMicrophone(): Promise<void> {
-    try {
-      this.mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({
-        sampleRate: 16000,
-      });
-
-      const source = audioCtx.createMediaStreamSource(this.mediaStream);
-      this.scriptProcessor = audioCtx.createScriptProcessor(2048, 1, 1);
-
-      this.scriptProcessor.onaudioprocess = (e) => {
-        if (!this.isConnected || this.isMuted) return;
-
-        const inputData = e.inputBuffer.getChannelData(0);
-        const pcm16 = new Int16Array(inputData.length);
-        for (let i = 0; i < inputData.length; i++) {
-          const s = Math.max(-1, Math.min(1, inputData[i]));
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-        }
-
-        const base64Chunk = this.arrayBufferToBase64(pcm16.buffer);
-
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-          const clientContent = {
-            realtimeInput: {
-              mediaChunks: [
-                {
-                  mimeType: "audio/pcm;rate=16000",
-                  data: base64Chunk,
-                },
-              ],
-            },
-          };
-          this.ws.send(JSON.stringify(clientContent));
-        }
-      };
-
-      source.connect(this.scriptProcessor);
-      this.scriptProcessor.connect(audioCtx.destination);
-    } catch (err: any) {
-      console.warn("Microphone access notice:", err);
-      this.callbacks.onError("Microphone access error: " + err.message);
-    }
-  }
-
-  // Handle Server WebSocket Messages
-  private handleServerMessage(data: any): void {
-    // 1. Barge-In Interruption: User spoke over AI
-    if (data.serverContent?.interrupted) {
+  private handleServerMessage(message: LiveServerMessage): void {
+    const content = message.serverContent;
+    if (content?.interrupted) {
       this.stopPlayback();
       this.callbacks.onStateChange("listening");
-      return;
     }
 
-    // 2. Audio & Transcript streaming from Gemini Live
-    if (data.serverContent?.modelTurn?.parts) {
-      for (const part of data.serverContent.modelTurn.parts) {
-        if (part.inlineData && part.inlineData.data) {
+    if (content?.interimInputTranscription?.text) {
+      this.callbacks.onTranscript("user", content.interimInputTranscription.text, false);
+    }
+    if (content?.inputTranscription?.text) {
+      this.callbacks.onTranscript("user", content.inputTranscription.text, true);
+      this.callbacks.onStateChange("thinking");
+    }
+    if (content?.outputTranscription?.text) {
+      this.callbacks.onTranscript("ai", content.outputTranscription.text, false);
+    }
+
+    if (content?.modelTurn?.parts) {
+      for (const part of content.modelTurn.parts) {
+        if (part.inlineData?.data) {
           this.playPcmChunk(part.inlineData.data);
           this.callbacks.onStateChange("speaking");
         }
@@ -341,94 +229,88 @@ BEHAVIOR:
       }
     }
 
-    if (data.serverContent?.turnComplete) {
+    if (content?.turnComplete) {
       this.callbacks.onTranscript("ai", "", true);
       this.callbacks.onStateChange("listening");
     }
 
-    // 3. Native Function Call Handling -> Tool Result Loop in SAME Live Session
-    if (data.toolCall?.functionCalls) {
+    if (message.toolCall?.functionCalls?.length) {
       this.callbacks.onStateChange("using_tool");
-
-      for (const call of data.toolCall.functionCalls) {
-        this.callbacks.onToolExecuting(call.name, call.args || {});
-
-        const toolResult = BAAgentService.executeTool(
-          call.name,
-          call.args || {},
+      const functionResponses = message.toolCall.functionCalls.map((call) => {
+        const startedAt = performance.now();
+        const args = (call.args || {}) as Record<string, unknown>;
+        this.callbacks.onToolExecuting(call.name || "unknown_tool", args);
+        const result = BAAgentService.executeTool(
+          call.name || "unknown_tool",
+          args,
           this.venture,
           "daily_standup"
         );
-
-        if (toolResult.updatedVenture) {
-          this.venture = toolResult.updatedVenture;
-          VentureStore.updateVenture(this.venture);
+        if (result.updatedVenture) {
+          this.venture = result.updatedVenture;
           this.callbacks.onVentureUpdated(this.venture);
         }
+        this.callbacks.onToolExecuted(call.name || "unknown_tool", result);
 
-        this.callbacks.onToolExecuted(call.name, toolResult);
+        AIOperationsLogger.logOperation({
+          ventureId: this.venture.id,
+          ceremony: "daily_standup",
+          geminiModel: GEMINI_CONFIG.LIVE_MODEL,
+          toolRequested: `live_roundtrip:${call.name || "unknown_tool"}`,
+          toolArguments: args,
+          toolResult: {
+            success: result.success,
+            message: result.message,
+            returnedToSameSession: true,
+          },
+          reasoningCategory: call.name === "record_commitment" ? "accountability" : "board_mutation",
+          latencyMs: Math.round(performance.now() - startedAt),
+          success: result.success,
+        });
 
-        // Return tool result back to Gemini Live in the SAME session
-        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-          const toolResponsePayload = {
-            toolResponse: {
-              functionResponses: [
-                {
-                  response: {
-                    output: {
-                      success: toolResult.success,
-                      message: toolResult.message,
-                      data: toolResult.data || {},
-                    },
-                  },
-                  id: call.id,
-                },
-              ],
-            },
-          };
-          this.ws.send(JSON.stringify(toolResponsePayload));
-        }
-      }
+        return {
+          id: call.id,
+          name: call.name,
+          response: result.success
+            ? { output: { success: true, message: result.message, data: result.data || {} } }
+            : { error: { success: false, message: result.message } },
+        };
+      });
+
+      // Synchronous Live tools pause model generation until this response is
+      // returned, so Sarah continues in this exact conversation with the
+      // authoritative success/failure result.
+      this.session?.sendToolResponse({ functionResponses });
     }
   }
 
-  // Play 24kHz PCM Audio through Web Audio API
   private playPcmChunk(base64Data: string): void {
-    if (!this.audioContext || !this.analyserNode) return;
-
+    if (!this.outputAudioContext || !this.analyserNode) return;
     try {
       const pcmBytes = this.base64ToArrayBuffer(base64Data);
-      const int16Array = new Int16Array(pcmBytes);
-      const float32Array = new Float32Array(int16Array.length);
+      const pcm16 = new Int16Array(pcmBytes);
+      const samples = new Float32Array(pcm16.length);
+      for (let i = 0; i < pcm16.length; i++) samples[i] = pcm16[i] / 32768;
 
-      for (let i = 0; i < int16Array.length; i++) {
-        float32Array[i] = int16Array[i] / 32768.0;
-      }
-
-      const audioBuffer = this.audioContext.createBuffer(1, float32Array.length, 24000);
-      audioBuffer.getChannelData(0).set(float32Array);
-
-      const source = this.audioContext.createBufferSource();
-      source.buffer = audioBuffer;
-
+      const buffer = this.outputAudioContext.createBuffer(
+        1,
+        samples.length,
+        GEMINI_CONFIG.AUDIO_OUTPUT_SAMPLE_RATE
+      );
+      buffer.getChannelData(0).set(samples);
+      const source = this.outputAudioContext.createBufferSource();
+      source.buffer = buffer;
       source.connect(this.analyserNode);
-      this.analyserNode.connect(this.audioContext.destination);
-
-      const currentTime = this.audioContext.currentTime;
-      if (this.nextPlayTime < currentTime) {
-        this.nextPlayTime = currentTime;
-      }
-
+      const now = this.outputAudioContext.currentTime;
+      this.nextPlayTime = Math.max(this.nextPlayTime, now);
       source.start(this.nextPlayTime);
-      this.nextPlayTime += audioBuffer.duration;
+      this.nextPlayTime += buffer.duration;
       this.audioQueue.push(source);
-
       source.onended = () => {
-        const idx = this.audioQueue.indexOf(source);
-        if (idx > -1) this.audioQueue.splice(idx, 1);
+        this.audioQueue = this.audioQueue.filter((queued) => queued !== source);
       };
-    } catch (e) {
-      console.warn("PCM audio playback error:", e);
+    } catch (error) {
+      console.warn("Gemini Live PCM playback failed:", error);
     }
   }
 
@@ -439,72 +321,98 @@ BEHAVIOR:
 
   setMuted(muted: boolean): void {
     this.isMuted = muted;
+    if (muted) this.session?.sendRealtimeInput({ audioStreamEnd: true });
   }
 
   disconnect(): void {
+    this.isDisconnecting = true;
+    if (this.isConnected) {
+      AIOperationsLogger.logOperation({
+        ventureId: this.venture.id,
+        ceremony: "daily_standup",
+        geminiModel: GEMINI_CONFIG.LIVE_MODEL,
+        toolRequested: "live_session_end",
+        toolArguments: {},
+        toolResult: { status: "closed_by_user" },
+        reasoningCategory: "accountability",
+        latencyMs: Math.max(1, Math.round(performance.now() - this.connectStartedAt)),
+        success: true,
+      });
+    }
     this.cleanup();
+    this.callbacks.onStateChange("disconnected");
   }
 
-  private stopPlayback(): void {
-    for (const source of this.audioQueue) {
-      try {
-        source.stop();
-      } catch (e) {}
-    }
-    this.audioQueue = [];
-    if (this.audioContext) {
-      this.nextPlayTime = this.audioContext.currentTime;
-    }
+  private signalFallback(message: string): void {
+    if (this.fallbackSignaled || this.isDisconnecting) return;
+    this.fallbackSignaled = true;
+    this.callbacks.onStateChange("error");
+    this.callbacks.onError(message);
+    AIOperationsLogger.logOperation({
+      ventureId: this.venture.id,
+      ceremony: "daily_standup",
+      geminiModel: GEMINI_CONFIG.LIVE_MODEL,
+      toolRequested: "live_session_fallback",
+      toolArguments: {},
+      toolResult: { error: message, fallback: "speech_text_tts" },
+      reasoningCategory: "accountability",
+      latencyMs: Math.max(1, Math.round(performance.now() - this.connectStartedAt)),
+      success: false,
+    });
   }
 
   private cleanup(): void {
     this.isConnected = false;
     this.stopPlayback();
-
-    if (this.ws) {
-      try {
-        this.ws.close();
-      } catch (e) {}
-      this.ws = null;
-    }
-
-    if (this.scriptProcessor) {
-      try {
-        this.scriptProcessor.disconnect();
-      } catch (e) {}
-      this.scriptProcessor = null;
-    }
-
-    if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach((t) => t.stop());
-      this.mediaStream = null;
-    }
-
-    if (this.audioContext) {
-      try {
-        this.audioContext.close();
-      } catch (e) {}
-      this.audioContext = null;
-    }
+    try { this.session?.close(); } catch {}
+    this.session = null;
+    try { this.microphoneSource?.disconnect(); } catch {}
+    this.microphoneSource = null;
+    try { this.scriptProcessor?.disconnect(); } catch {}
+    this.scriptProcessor = null;
+    this.mediaStream?.getTracks().forEach((track) => track.stop());
+    this.mediaStream = null;
+    void this.captureAudioContext?.close();
+    void this.outputAudioContext?.close();
+    this.captureAudioContext = null;
+    this.outputAudioContext = null;
+    this.analyserNode = null;
   }
 
-  private arrayBufferToBase64(buffer: ArrayBuffer): string {
-    let binary = "";
-    const bytes = new Uint8Array(buffer);
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
+  private stopPlayback(): void {
+    for (const source of this.audioQueue) {
+      try { source.stop(); } catch {}
     }
+    this.audioQueue = [];
+    if (this.outputAudioContext) this.nextPlayTime = this.outputAudioContext.currentTime;
+  }
+
+  private resample(input: Float32Array, inputRate: number, outputRate: number): Float32Array {
+    if (inputRate === outputRate) return input;
+    const ratio = inputRate / outputRate;
+    const outputLength = Math.max(1, Math.round(input.length / ratio));
+    const output = new Float32Array(outputLength);
+    for (let i = 0; i < outputLength; i++) {
+      const start = Math.floor(i * ratio);
+      const end = Math.min(input.length, Math.floor((i + 1) * ratio));
+      let sum = 0;
+      for (let j = start; j < end; j++) sum += input[j];
+      output[i] = sum / Math.max(1, end - start);
+    }
+    return output;
+  }
+
+  private arrayBufferToBase64(buffer: ArrayBufferLike): string {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
     return window.btoa(binary);
   }
 
   private base64ToArrayBuffer(base64: string): ArrayBuffer {
-    const binaryString = window.atob(base64);
-    const len = binaryString.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
+    const binary = window.atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
     return bytes.buffer;
   }
 }

@@ -17,7 +17,7 @@ import {
   Cpu,
   BookOpen
 } from "lucide-react";
-import { Show, UserButton, SignInButton, SignUpButton } from "@clerk/nextjs";
+import { Show, UserButton, SignUpButton } from "@clerk/nextjs";
 
 export function Navbar() {
   const [mounted, setMounted] = useState(false);
@@ -267,11 +267,12 @@ export function Navbar() {
           ) : (
             <>
               <Show when="signed-out">
-                <SignInButton mode="modal" fallbackRedirectUrl="/dashboard">
-                  <button className="text-sm font-semibold text-slate-700 hover:text-blue-600 px-3.5 py-2 transition-colors cursor-pointer">
-                    Sign In
-                  </button>
-                </SignInButton>
+                <Link
+                  href="/sign-in"
+                  className="text-sm font-semibold text-slate-700 hover:text-blue-600 px-3.5 py-2 transition-colors cursor-pointer"
+                >
+                  Sign In
+                </Link>
                 <SignUpButton mode="modal" fallbackRedirectUrl="/dashboard">
                   <button className="inline-flex items-center justify-center px-5 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm transition-all shadow-md shadow-blue-500/20 hover:shadow-lg hover:shadow-blue-500/30 cursor-pointer">
                     Start Free Trial
@@ -345,11 +346,13 @@ export function Navbar() {
 
           <div className="pt-4 flex flex-col gap-3 border-t border-slate-100">
             <Show when="signed-out">
-              <SignInButton mode="modal" fallbackRedirectUrl="/dashboard">
-                <button className="w-full py-2.5 rounded-full border border-slate-300 text-slate-700 font-semibold text-center hover:bg-slate-50 transition-colors">
-                  Sign In
-                </button>
-              </SignInButton>
+              <Link
+                href="/sign-in"
+                onClick={() => setMobileMenuOpen(false)}
+                className="w-full py-2.5 rounded-full border border-slate-300 text-slate-700 font-semibold text-center hover:bg-slate-50 transition-colors"
+              >
+                Sign In
+              </Link>
               <SignUpButton mode="modal" fallbackRedirectUrl="/dashboard">
                 <button className="w-full py-2.5 rounded-full bg-blue-600 text-white font-semibold text-center shadow-md hover:bg-blue-700 transition-colors">
                   Start 7-Day Free Trial
