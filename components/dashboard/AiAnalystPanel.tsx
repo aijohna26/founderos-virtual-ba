@@ -29,6 +29,9 @@ export interface AiAnalystPanelProps {
   setIsDailyCallActive: (active: boolean) => void;
   venture: Venture;
   onUpdateVenture: (venture: Venture) => void;
+  isMobileOpen?: boolean;
+  onMobileClose?: () => void;
+  onMobileOpen?: () => void;
 }
 
 export function AiAnalystPanel({
@@ -36,6 +39,9 @@ export function AiAnalystPanel({
   setIsDailyCallActive,
   venture,
   onUpdateVenture,
+  isMobileOpen = false,
+  onMobileClose,
+  onMobileOpen,
 }: AiAnalystPanelProps) {
   const [micMuted, setMicMuted] = useState(false);
   const [voiceAudioEnabled, setVoiceAudioEnabled] = useState(true);
@@ -90,26 +96,48 @@ export function AiAnalystPanel({
     }
   }, [messages, isTyping]);
 
-  // Initialize Speech Recognition & Voice Engine
+  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingTranscriptRef = useRef<string>("");
+
+  // Initialize Speech Recognition & Voice Engine with Barge-In & Silence Detection
   useEffect(() => {
     VoiceEngine.preloadVoices();
     VoiceEngine.initRecognition(
       (transcript, isFinal) => {
-        if (isFinal && transcript.trim().length > 0) {
-          submitMessage(transcript.trim());
-        } else {
-          setInputVal(transcript);
+        if (!transcript.trim()) return;
+
+        setInputVal(transcript);
+        pendingTranscriptRef.current = transcript.trim();
+
+        // Clear existing silence timer
+        if (silenceTimerRef.current) {
+          clearTimeout(silenceTimerRef.current);
         }
+
+        // Wait for the user to finish speaking (600ms on final or 1300ms on pause)
+        const delay = isFinal ? 600 : 1300;
+        silenceTimerRef.current = setTimeout(() => {
+          if (pendingTranscriptRef.current.trim().length > 0 && !isTyping) {
+            const textToSubmit = pendingTranscriptRef.current.trim();
+            pendingTranscriptRef.current = "";
+            submitMessage(textToSubmit);
+          }
+        }, delay);
       },
       (state) => {
         setVoiceState(state);
       },
       (err) => {
         console.warn("Voice Engine:", err);
+      },
+      () => {
+        // Interrupted callback: User spoke over AI
+        setIsSpeakingAI(false);
       }
     );
 
     return () => {
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
       VoiceEngine.stopListening();
       VoiceEngine.stopSpeaking();
     };
@@ -150,6 +178,11 @@ export function AiAnalystPanel({
 
   const submitMessage = async (userText: string) => {
     if (!userText.trim() || isTyping) return;
+    if (silenceTimerRef.current) {
+      clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    pendingTranscriptRef.current = "";
     setInputVal("");
 
     const newMsg: ChatMessage = {
@@ -357,15 +390,19 @@ export function AiAnalystPanel({
       setIsSpeakingAI(false);
       setVoiceState("idle");
     } else {
-      // Starting call: speak latest AI message or greeting immediately!
+      // Unlock audio and ensure voice is active
+      setVoiceAudioEnabled(true);
+      VoiceEngine.unlockAudio();
       const lastAiMsg = [...messages].reverse().find((m) => m.sender === "ai");
-      if (lastAiMsg && voiceAudioEnabled) {
-        VoiceEngine.speak(
-          lastAiMsg.text,
-          () => setIsSpeakingAI(true),
-          () => setIsSpeakingAI(false)
-        );
-      }
+      const greeting =
+        lastAiMsg?.text ||
+        `Good day Founder! I'm your AI Business Analyst. I've loaded your venture context for ${venture.name}. What's the biggest uncertainty we should stress-test today?`;
+
+      VoiceEngine.speak(
+        greeting,
+        () => setIsSpeakingAI(true),
+        () => setIsSpeakingAI(false)
+      );
     }
   };
 
@@ -404,8 +441,8 @@ export function AiAnalystPanel({
     );
   }
 
-  return (
-    <aside className="w-64 bg-white border-l border-slate-200/90 flex flex-col justify-between h-screen sticky top-0 z-30 select-none shrink-0 shadow-xs transition-all duration-200">
+  const panelContent = (
+    <div className="flex flex-col justify-between h-full w-full bg-white select-none">
       {/* 1. Header */}
       <div className="p-3 border-b border-slate-100 flex items-center justify-between">
         <div>
@@ -458,7 +495,7 @@ export function AiAnalystPanel({
                 ? "hover:bg-slate-100 text-slate-500 hover:text-blue-600"
                 : "bg-rose-50 text-rose-600"
             }`}
-            title={voiceAudioEnabled ? "Voice Output Active" : "Voice Output Muted"}
+            title={voiceAudioEnabled ? "Voice Output Active (If you can't hear audio, please restart your browser)" : "Voice Output Muted"}
           >
             {voiceAudioEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
           </button>
@@ -613,6 +650,8 @@ export function AiAnalystPanel({
           {/* Direct Speak / Play Voice button */}
           <button
             onClick={() => {
+              VoiceEngine.unlockAudio();
+              setVoiceAudioEnabled(true);
               const lastAiMsg = [...messages].reverse().find((m) => m.sender === "ai");
               if (lastAiMsg) {
                 VoiceEngine.speak(
@@ -904,6 +943,47 @@ export function AiAnalystPanel({
           </div>
         </div>
       )}
-    </aside>
+    </div>
+  );
+
+  return (
+    <>
+      {/* Desktop Persistent Panel */}
+      <aside className="hidden lg:flex w-72 lg:w-80 bg-white border-l border-slate-200/90 flex-col justify-between h-screen sticky top-0 z-30 select-none shrink-0 shadow-xs transition-all duration-200">
+        {panelContent}
+      </aside>
+
+      {/* Mobile Slide-over Drawer */}
+      {isMobileOpen && (
+        <div className="fixed inset-0 z-50 flex justify-end lg:hidden">
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs transition-opacity animate-in fade-in duration-150"
+            onClick={onMobileClose}
+          />
+          {/* Drawer Body */}
+          <aside className="relative w-80 max-w-[90vw] bg-white h-full shadow-2xl flex flex-col z-10 animate-in slide-in-from-right duration-200">
+            {panelContent}
+          </aside>
+        </div>
+      )}
+
+      {/* Mobile Floating Action Trigger */}
+      {!isMobileOpen && onMobileOpen && (
+        <div className="fixed bottom-5 right-5 z-40 lg:hidden">
+          <button
+            onClick={onMobileOpen}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs shadow-xl shadow-blue-500/40 border border-blue-400/40 active:scale-95 transition-all cursor-pointer"
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
+            </span>
+            <PhoneCall className="w-3.5 h-3.5" />
+            <span>AI BA Co-Pilot</span>
+          </button>
+        </div>
+      )}
+    </>
   );
 }

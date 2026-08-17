@@ -29,6 +29,8 @@ export default function DashboardPage() {
   const [createModalOpen, setCreateModalOpen] = useState<boolean>(false);
   const [settingsModalOpen, setSettingsModalOpen] = useState<boolean>(false);
   const [helpModalOpen, setHelpModalOpen] = useState<boolean>(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState<boolean>(false);
+  const [mobileAiPanelOpen, setMobileAiPanelOpen] = useState<boolean>(false);
   const [mounted, setMounted] = useState<boolean>(false);
 
   useEffect(() => {
@@ -69,7 +71,7 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex font-sans text-slate-900 selection:bg-blue-500 selection:text-white">
-      {/* 1. Left Sidebar Navigation */}
+      {/* 1. Left Sidebar Navigation (Desktop persistent + Mobile Drawer) */}
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -81,6 +83,8 @@ export default function DashboardPage() {
         setIsDailyCallActive={setIsDailyCallActive}
         onOpenSettings={() => setSettingsModalOpen(true)}
         onOpenHelp={() => setHelpModalOpen(true)}
+        isMobileOpen={mobileSidebarOpen}
+        onMobileClose={() => setMobileSidebarOpen(false)}
       />
 
       {/* 2. Main Content Area */}
@@ -96,10 +100,12 @@ export default function DashboardPage() {
           isDailyCallActive={isDailyCallActive}
           setIsDailyCallActive={setIsDailyCallActive}
           onUpdateVenture={handleUpdateVenture}
+          onToggleMobileSidebar={() => setMobileSidebarOpen(!mobileSidebarOpen)}
+          onToggleMobileAiPanel={() => setMobileAiPanelOpen(!mobileAiPanelOpen)}
         />
 
         {/* Dynamic Main Workspace Canvas */}
-        <main className="flex-1 p-4 md:p-5 bg-slate-50/50 min-w-0">
+        <main className="flex-1 p-3 sm:p-5 bg-slate-50/50 min-w-0">
           {activeTab === "Overview" && (
             <OverviewTab
               venture={activeVenture}
@@ -133,12 +139,15 @@ export default function DashboardPage() {
         </main>
       </div>
 
-      {/* 3. Right AI Business Analyst Co-Pilot Panel */}
+      {/* 3. Right AI Business Analyst Co-Pilot Panel (Desktop persistent + Mobile Drawer / FAB) */}
       <AiAnalystPanel
         isDailyCallActive={isDailyCallActive}
         setIsDailyCallActive={setIsDailyCallActive}
         venture={activeVenture}
         onUpdateVenture={handleUpdateVenture}
+        isMobileOpen={mobileAiPanelOpen}
+        onMobileClose={() => setMobileAiPanelOpen(false)}
+        onMobileOpen={() => setMobileAiPanelOpen(true)}
       />
 
       {/* 4. Create New Venture Modal */}

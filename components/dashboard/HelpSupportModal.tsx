@@ -52,6 +52,16 @@ export function HelpSupportModal({ isOpen, onClose }: HelpSupportModalProps) {
             </p>
           </div>
 
+          <div className="p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200/80 space-y-1">
+            <div className="text-xs font-bold text-amber-900 flex items-center gap-2">
+              <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+              <span>Can&apos;t hear the AI Agent? (Audio Troubleshooting)</span>
+            </div>
+            <p className="text-[11px] text-amber-900/90 leading-relaxed">
+              If you&apos;re speaking to Sarah and cannot hear her voice output, <strong>please restart your browser</strong> or refresh the tab. Browsers (especially Chrome and Safari) can occasionally suspend background Web Speech audio queues until the browser is restarted. Also verify that your tab and system volume are unmuted.
+            </p>
+          </div>
+
           <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200/70 space-y-1">
             <div className="text-xs font-bold text-slate-900 flex items-center gap-2">
               <LayoutGrid className="w-3.5 h-3.5 text-purple-600" />
