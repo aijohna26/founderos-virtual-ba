@@ -13,13 +13,14 @@ import {
   ArrowRight
 } from "lucide-react";
 import { playAlertChime } from "@/lib/utils/soundAlert";
-import { findAdvisorById } from "@/lib/config/advisorPersonas";
+import { resolveAdvisor } from "@/lib/config/advisorPersonas";
 
 export interface DailyCallAlertModalProps {
   isDailyCallActive: boolean;
   onJoinCall: () => void;
   ventureName: string;
   advisorId?: string;
+  advisorVoiceName?: string;
 }
 
 export function DailyCallAlertModal({
@@ -27,8 +28,9 @@ export function DailyCallAlertModal({
   onJoinCall,
   ventureName,
   advisorId,
+  advisorVoiceName,
 }: DailyCallAlertModalProps) {
-  const advisor = findAdvisorById(advisorId);
+  const advisor = resolveAdvisor(advisorId, advisorVoiceName);
   const [scheduledTime, setScheduledTime] = useState<string>("09:00");
   const [activeAlertMinutes, setActiveAlertMinutes] = useState<number | null>(null);
   const [snoozedUntil, setSnoozedUntil] = useState<number | null>(null);

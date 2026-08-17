@@ -28,7 +28,13 @@ import { Venture, VentureStore, ChatMessage } from "@/lib/store/ventureStore";
 import { VoiceEngine, VoiceState } from "@/lib/voice/voiceEngine";
 import { MemoryService, MemoryFact } from "@/lib/db/memoryService";
 import { BAAgentService, type ToolExecutionResult } from "@/lib/agent/baAgentService";
-import { ADVISOR_PERSONAS, findAdvisorById, type AdvisorPersona } from "@/lib/config/advisorPersonas";
+import {
+  ADVISOR_PERSONAS,
+  GEMINI_VOICES,
+  findGeminiVoice,
+  resolveAdvisor,
+  type AdvisorPersona,
+} from "@/lib/config/advisorPersonas";
 
 export interface AiAnalystPanelProps {
   isDailyCallActive: boolean;
@@ -38,6 +44,7 @@ export interface AiAnalystPanelProps {
   isMobileOpen?: boolean;
   onMobileClose?: () => void;
   onMobileOpen?: () => void;
+  voiceControlsManagedExternally?: boolean;
 }
 
 export function AiAnalystPanel({
@@ -48,8 +55,9 @@ export function AiAnalystPanel({
   isMobileOpen = false,
   onMobileClose,
   onMobileOpen,
+  voiceControlsManagedExternally = false,
 }: AiAnalystPanelProps) {
-  const advisor = findAdvisorById(venture.advisorId);
+  const advisor = resolveAdvisor(venture.advisorId, venture.advisorVoiceName);
   const [micMuted, setMicMuted] = useState(false);
   const [voiceAudioEnabled, setVoiceAudioEnabled] = useState(true);
   const [callDuration, setCallDuration] = useState(0);
@@ -64,6 +72,10 @@ export function AiAnalystPanel({
   const [memories, setMemories] = useState<MemoryFact[]>([]);
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const latestMsgRef = useRef<HTMLDivElement>(null);
+  const analystRequestRef = useRef<AbortController | null>(null);
+  const componentActiveRef = useRef(true);
+  const isTypingRef = useRef(isTyping);
+  const submitMessageRef = useRef<(text: string) => void>(() => {});
 
   const messages = venture?.chatHistory || [
     {
@@ -81,6 +93,19 @@ export function AiAnalystPanel({
     VentureStore.updateVenture(updatedVenture);
     onUpdateVenture(updatedVenture);
     setShowAdvisorPicker(false);
+  };
+
+  const selectVoice = (voiceName: string) => {
+    const voice = findGeminiVoice(voiceName);
+    if (!voice) return;
+    VoiceEngine.stopSpeaking();
+    setIsSpeakingAI(false);
+    const updatedVenture: Venture = {
+      ...venture,
+      advisorVoiceName: voice.name,
+    };
+    VentureStore.updateVenture(updatedVenture);
+    onUpdateVenture(updatedVenture);
   };
 
   // Sync standup schedule time when switching projects
@@ -116,6 +141,19 @@ export function AiAnalystPanel({
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pendingTranscriptRef = useRef<string>("");
 
+  useEffect(() => {
+    componentActiveRef.current = true;
+    return () => {
+      componentActiveRef.current = false;
+      analystRequestRef.current?.abort();
+      analystRequestRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    isTypingRef.current = isTyping;
+  }, [isTyping]);
+
   // Initialize Speech Recognition & Voice Engine with Real-Time Interruption & Silence Detection
   useEffect(() => {
     VoiceEngine.preloadVoices();
@@ -136,7 +174,7 @@ export function AiAnalystPanel({
         // Wait for the user to finish speaking (600ms on final or 1300ms on pause)
         const delay = isFinal ? 600 : 1300;
         silenceTimerRef.current = setTimeout(() => {
-          if (pendingTranscriptRef.current.trim().length > 0 && !isTyping) {
+          if (pendingTranscriptRef.current.trim().length > 0 && !isTypingRef.current) {
             const textToSubmit = pendingTranscriptRef.current.trim();
             pendingTranscriptRef.current = "";
 
@@ -146,7 +184,7 @@ export function AiAnalystPanel({
               return;
             }
 
-            submitMessage(textToSubmit);
+            submitMessageRef.current(textToSubmit);
           }
         }, delay);
       },
@@ -168,7 +206,7 @@ export function AiAnalystPanel({
       VoiceEngine.stopListening();
       VoiceEngine.stopSpeaking();
     };
-  }, [venture]);
+  }, [venture.id]);
 
   // Auto-scroll to latest message
   useEffect(() => {
@@ -177,12 +215,16 @@ export function AiAnalystPanel({
 
   // Manage mic listening during Daily Call
   useEffect(() => {
+    if (voiceControlsManagedExternally) {
+      VoiceEngine.stopListening();
+      return;
+    }
     if (isDailyCallActive && !micMuted) {
       VoiceEngine.startListening();
     } else {
       VoiceEngine.stopListening();
     }
-  }, [isDailyCallActive, micMuted]);
+  }, [isDailyCallActive, micMuted, voiceControlsManagedExternally]);
 
   // Call timer effect
   useEffect(() => {
@@ -228,6 +270,9 @@ export function AiAnalystPanel({
     VentureStore.updateVenture(updatedVenture);
     onUpdateVenture(updatedVenture);
     setIsTyping(true);
+    analystRequestRef.current?.abort();
+    const requestController = new AbortController();
+    analystRequestRef.current = requestController;
 
     try {
       const activeMemories = MemoryService.getMemories(venture.id);
@@ -250,9 +295,11 @@ export function AiAnalystPanel({
           memories: activeMemories,
           history: updatedHistory.slice(-6),
         }),
+        signal: requestController.signal,
       });
 
       const data = await res.json();
+      if (!componentActiveRef.current || requestController.signal.aborted) return;
       const aiReplyText =
         data.reply ||
         `I've analyzed your input for ${venture.name}. Let's prioritize validating your core hypothesis.`;
@@ -317,6 +364,7 @@ export function AiAnalystPanel({
         );
       }
     } catch (err) {
+      if (requestController.signal.aborted || !componentActiveRef.current) return;
       console.error("Failed to fetch AI Analyst response:", err);
       const fallbackMsg: ChatMessage = {
         id: "ai-" + Date.now(),
@@ -331,10 +379,19 @@ export function AiAnalystPanel({
       VentureStore.updateVenture(finalVenture);
       onUpdateVenture(finalVenture);
     } finally {
-      setIsTyping(false);
-      chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      if (analystRequestRef.current === requestController) {
+        analystRequestRef.current = null;
+      }
+      if (componentActiveRef.current) {
+        setIsTyping(false);
+        chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      }
     }
   };
+
+  useEffect(() => {
+    submitMessageRef.current = submitMessage;
+  });
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -342,6 +399,7 @@ export function AiAnalystPanel({
   };
 
   const toggleMic = () => {
+    if (voiceControlsManagedExternally) return;
     const nextMuted = !micMuted;
     setMicMuted(nextMuted);
     if (nextMuted) {
@@ -355,6 +413,7 @@ export function AiAnalystPanel({
   };
 
   const toggleCall = () => {
+    if (voiceControlsManagedExternally) return;
     const nextCall = !isDailyCallActive;
     setIsDailyCallActive(nextCall);
 
@@ -517,7 +576,7 @@ export function AiAnalystPanel({
         <div className="absolute left-3 right-3 top-[4.25rem] z-50 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-900/20 animate-in fade-in slide-in-from-top-2 duration-150">
           <div className="flex items-start justify-between border-b border-slate-100 bg-slate-50/80 px-3.5 py-3">
             <div>
-              <p className="text-xs font-black text-slate-900">Choose BA for {venture.name}</p>
+              <p className="text-xs font-black text-slate-900">Choose BA &amp; voice for {venture.name}</p>
               <p className="mt-0.5 text-[10px] text-slate-500">Saved only to this project</p>
             </div>
             <button
@@ -564,6 +623,28 @@ export function AiAnalystPanel({
                 </button>
               );
             })}
+          </div>
+
+          <div className="border-t border-slate-100 bg-slate-50/80 p-3">
+            <label htmlFor="project-ba-voice" className="mb-1.5 flex items-center justify-between text-[10px] font-bold text-slate-700">
+              <span>Voice for {venture.name}</span>
+              <span className="font-semibold text-blue-600">30 Gemini voices</span>
+            </label>
+            <select
+              id="project-ba-voice"
+              value={advisor.voiceName}
+              onChange={(event) => selectVoice(event.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-[11px] font-semibold text-slate-800 shadow-sm outline-none transition focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+            >
+              {GEMINI_VOICES.map((voice) => (
+                <option key={voice.name} value={voice.name}>
+                  {voice.name} — {voice.character}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1.5 text-[9px] leading-relaxed text-slate-500">
+              Applied to Gemini Live and server TTS fallback for this project only.
+            </p>
           </div>
         </div>
       )}
@@ -647,10 +728,10 @@ export function AiAnalystPanel({
           onClick={() => setShowAdvisorPicker(true)}
           disabled={isDailyCallActive}
           className="group mt-1 inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-white px-2.5 py-1 text-[10px] font-bold text-slate-700 shadow-sm transition-all hover:border-blue-400 hover:text-blue-700 hover:shadow disabled:cursor-not-allowed disabled:opacity-60"
-          title={isDailyCallActive ? "End the daily call before changing BA" : `Change BA for ${venture.name}`}
+          title={isDailyCallActive ? "End the daily call before changing BA or voice" : `Change BA or voice for ${venture.name}`}
         >
           <span>{advisor.name}</span>
-          <span className="text-blue-600">Change BA</span>
+          <span className="text-blue-600">Change BA / Voice</span>
           <ChevronDown className="h-3 w-3 text-slate-400 transition-transform group-hover:translate-y-0.5" />
         </button>
 
@@ -687,6 +768,7 @@ export function AiAnalystPanel({
           {/* Mute toggle */}
           <button
             onClick={toggleMic}
+            disabled={voiceControlsManagedExternally}
             className={`p-2.5 rounded-full transition-all cursor-pointer ${
               micMuted
                 ? "bg-rose-100 text-rose-600 hover:bg-rose-200"
@@ -694,7 +776,7 @@ export function AiAnalystPanel({
                 ? "bg-blue-600 text-white ring-2 ring-blue-200"
                 : "bg-slate-100 text-slate-700 hover:bg-slate-200"
             }`}
-            title={micMuted ? "Unmute Microphone" : "Mute Microphone"}
+            title={voiceControlsManagedExternally ? "Use the Stand-up controls for this call" : micMuted ? "Unmute Microphone" : "Mute Microphone"}
           >
             {micMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
           </button>
@@ -702,12 +784,13 @@ export function AiAnalystPanel({
           {/* End Call / Start Call Button */}
           <button
             onClick={toggleCall}
+            disabled={voiceControlsManagedExternally}
             className={`p-3 rounded-full text-white shadow-md transition-all cursor-pointer ${
               isDailyCallActive
                 ? "bg-rose-600 hover:bg-rose-700 shadow-rose-500/30 ring-2 ring-rose-300"
                 : "bg-blue-600 hover:bg-blue-700 shadow-blue-500/30 hover:scale-105"
             }`}
-            title={isDailyCallActive ? "End Daily Call" : "Start Daily Call & Speak"}
+            title={voiceControlsManagedExternally ? "Use the Stand-up controls for this call" : isDailyCallActive ? "End Daily Call" : "Start Daily Call & Speak"}
           >
             {isDailyCallActive ? (
               <PhoneOff className="w-4 h-4" />

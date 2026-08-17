@@ -125,7 +125,6 @@ export function buildGeminiLiveConfig(context: GeminiLiveContext): LiveConnectCo
     temperature: 0.35,
     speechConfig: {
       voiceConfig: { prebuiltVoiceConfig: { voiceName } },
-      languageCode: "en-US",
     },
     inputAudioTranscription: {},
     outputAudioTranscription: {},

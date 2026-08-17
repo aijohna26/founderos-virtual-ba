@@ -23,6 +23,7 @@ import { SettingsModal } from "@/components/dashboard/SettingsModal";
 import { HelpSupportModal } from "@/components/dashboard/HelpSupportModal";
 import { VentureStore, Venture } from "@/lib/store/ventureStore";
 import { SHOW_ADVANCED_FEATURES } from "@/lib/config/featureFlags";
+import { VoiceEngine } from "@/lib/voice/voiceEngine";
 
 export default function DashboardPage() {
   const [activeTab, setActiveTab] = useState<string>("Today");
@@ -57,8 +58,19 @@ export default function DashboardPage() {
   };
 
   const handleVentureCreated = (newVenture: Venture) => {
+    VoiceEngine.stopSpeaking();
+    VoiceEngine.stopListening();
+    setIsDailyCallActive(false);
     setVentures((prev) => [...prev, newVenture]);
     setActiveVentureId(newVenture.id);
+  };
+
+  const handleActiveVentureChange = (ventureId: string) => {
+    if (ventureId === activeVentureId) return;
+    VoiceEngine.stopSpeaking();
+    VoiceEngine.stopListening();
+    setIsDailyCallActive(false);
+    setActiveVentureId(ventureId);
   };
 
   if (!mounted || !activeVenture) {
@@ -83,7 +95,7 @@ export default function DashboardPage() {
         activeTab={effectiveTab}
         setActiveTab={setActiveTab}
         activeVentureId={activeVenture.id}
-        setActiveVentureId={setActiveVentureId}
+        setActiveVentureId={handleActiveVentureChange}
         ventures={ventures}
         onOpenCreateVenture={() => setCreateModalOpen(true)}
         isDailyCallActive={isDailyCallActive}
@@ -102,7 +114,7 @@ export default function DashboardPage() {
           setActiveTab={setActiveTab}
           activeVenture={activeVenture}
           ventures={ventures}
-          setActiveVentureId={setActiveVentureId}
+          setActiveVentureId={handleActiveVentureChange}
           onOpenCreateVenture={() => setCreateModalOpen(true)}
           isDailyCallActive={isDailyCallActive}
           setIsDailyCallActive={setIsDailyCallActive}
@@ -128,6 +140,7 @@ export default function DashboardPage() {
           )}
           {effectiveTab === "Standup" && (
             <StandupTab
+              key={activeVenture.id}
               venture={activeVenture}
               onUpdateVenture={handleUpdateVenture}
               isDailyCallActive={isDailyCallActive}
@@ -170,6 +183,7 @@ export default function DashboardPage() {
 
       {/* 3. Right AI Business Analyst Co-Pilot Panel (Desktop persistent + Mobile Drawer / FAB) */}
       <AiAnalystPanel
+        key={activeVenture.id}
         isDailyCallActive={isDailyCallActive}
         setIsDailyCallActive={setIsDailyCallActive}
         venture={activeVenture}
@@ -177,6 +191,7 @@ export default function DashboardPage() {
         isMobileOpen={mobileAiPanelOpen}
         onMobileClose={() => setMobileAiPanelOpen(false)}
         onMobileOpen={() => setMobileAiPanelOpen(true)}
+        voiceControlsManagedExternally={effectiveTab === "Standup"}
       />
 
       {/* 4. Create New Venture Modal */}
@@ -195,6 +210,7 @@ export default function DashboardPage() {
         }}
         ventureName={activeVenture.name}
         advisorId={activeVenture.advisorId}
+        advisorVoiceName={activeVenture.advisorVoiceName}
       />
 
       {/* 6. Settings Modal */}

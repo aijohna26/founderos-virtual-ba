@@ -91,6 +91,8 @@ export interface Venture {
   standupTime?: string;
   /** Advisor selection is persisted independently for this venture. */
   advisorId?: string;
+  /** Optional project-specific Gemini voice override. */
+  advisorVoiceName?: string;
   currentSprint?: number;
   sprintStartDate?: string;
   sprintHistory?: SprintRecord[];

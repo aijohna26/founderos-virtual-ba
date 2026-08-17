@@ -56,6 +56,8 @@ export class GeminiLiveService {
   private nextPlayTime = 0;
   private audioQueue: AudioBufferSourceNode[] = [];
   private readonly advisor: AdvisorPersona;
+  private connectGeneration = 0;
+  private authAbortController: AbortController | null = null;
 
   constructor(
     venture: Venture,
@@ -72,6 +74,10 @@ export class GeminiLiveService {
   }
 
   async connect(): Promise<boolean> {
+    const connectGeneration = ++this.connectGeneration;
+    this.authAbortController?.abort();
+    const authAbortController = new AbortController();
+    this.authAbortController = authAbortController;
     this.connectStartedAt = performance.now();
     this.callbacks.onStateChange("connecting");
     this.isDisconnecting = false;
@@ -101,9 +107,12 @@ export class GeminiLiveService {
           learnings: context.learnings,
           memories: context.memories,
           advisorId: this.advisor.id,
+          voiceName: this.advisor.voiceName,
         }),
+        signal: authAbortController.signal,
       });
       const auth = (await authRes.json()) as LiveSessionAuthorization & { error?: string };
+      if (connectGeneration !== this.connectGeneration || this.isDisconnecting) return false;
       if (!authRes.ok || !auth.token) {
         throw new Error(auth.error || "Failed to provision a Gemini Live token");
       }
@@ -119,21 +128,27 @@ export class GeminiLiveService {
 
       const ai = new GoogleGenAI({
         apiKey: auth.token,
-        httpOptions: { apiVersion: "v1alpha" },
+        httpOptions: { apiVersion: "v1beta" },
       });
-      this.session = await ai.live.connect({
+      const session = await ai.live.connect({
         model: auth.model,
         config: buildGeminiLiveConfig(context),
         callbacks: {
           onopen: () => {
+            if (connectGeneration !== this.connectGeneration || this.isDisconnecting) return;
             this.isConnected = true;
           },
-          onmessage: (message) => this.handleServerMessage(message),
+          onmessage: (message) => {
+            if (connectGeneration !== this.connectGeneration || this.isDisconnecting) return;
+            this.handleServerMessage(message);
+          },
           onerror: (event) => {
+            if (connectGeneration !== this.connectGeneration || this.isDisconnecting) return;
             const detail = event.message || "Gemini Live connection error";
             this.signalFallback(detail);
           },
           onclose: (event) => {
+            if (connectGeneration !== this.connectGeneration) return;
             this.isConnected = false;
             if (!this.isDisconnecting) {
               this.signalFallback(event.reason || "Gemini Live connection closed unexpectedly");
@@ -141,8 +156,18 @@ export class GeminiLiveService {
           },
         },
       });
+      if (connectGeneration !== this.connectGeneration || this.isDisconnecting) {
+        try { session.close(); } catch {}
+        return false;
+      }
+      this.session = session;
+      this.authAbortController = null;
 
       await this.startMicrophone();
+      if (connectGeneration !== this.connectGeneration || this.isDisconnecting) {
+        this.cleanup();
+        return false;
+      }
       this.callbacks.onStateChange("listening");
       AIOperationsLogger.logOperation({
         ventureId: this.venture.id,
@@ -156,15 +181,18 @@ export class GeminiLiveService {
         success: true,
       });
 
-      this.session.sendClientContent({
-        turns: [{
-          role: "user",
-          parts: [{ text: "Start the stand-up now with the single most important observation from the supplied sprint context." }],
-        }],
-        turnComplete: true,
+      this.session.sendRealtimeInput({
+        text: "Start the stand-up now with the single most important observation from the supplied sprint context.",
       });
       return true;
     } catch (error) {
+      if (
+        connectGeneration !== this.connectGeneration ||
+        this.isDisconnecting ||
+        (error instanceof DOMException && error.name === "AbortError")
+      ) {
+        return false;
+      }
       const message = error instanceof Error ? error.message : "Failed to connect to Gemini Live";
       this.signalFallback(message);
       this.cleanup();
@@ -338,6 +366,9 @@ export class GeminiLiveService {
   }
 
   disconnect(): void {
+    this.connectGeneration += 1;
+    this.authAbortController?.abort();
+    this.authAbortController = null;
     this.isDisconnecting = true;
     if (this.isConnected) {
       AIOperationsLogger.logOperation({

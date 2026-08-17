@@ -3,12 +3,47 @@ export type AdvisorStyle =
   | "Strict & Analytical"
   | "Technical Architect";
 
+export const GEMINI_VOICES = [
+  { name: "Zephyr", character: "Bright" },
+  { name: "Puck", character: "Upbeat" },
+  { name: "Charon", character: "Informative" },
+  { name: "Kore", character: "Firm" },
+  { name: "Fenrir", character: "Excitable" },
+  { name: "Leda", character: "Youthful" },
+  { name: "Orus", character: "Firm" },
+  { name: "Aoede", character: "Breezy" },
+  { name: "Callirrhoe", character: "Easy-going" },
+  { name: "Autonoe", character: "Bright" },
+  { name: "Enceladus", character: "Breathy" },
+  { name: "Iapetus", character: "Clear" },
+  { name: "Umbriel", character: "Easy-going" },
+  { name: "Algieba", character: "Smooth" },
+  { name: "Despina", character: "Smooth" },
+  { name: "Erinome", character: "Clear" },
+  { name: "Algenib", character: "Gravelly" },
+  { name: "Rasalgethi", character: "Informative" },
+  { name: "Laomedeia", character: "Upbeat" },
+  { name: "Achernar", character: "Soft" },
+  { name: "Alnilam", character: "Firm" },
+  { name: "Schedar", character: "Even" },
+  { name: "Gacrux", character: "Mature" },
+  { name: "Pulcherrima", character: "Forward" },
+  { name: "Achird", character: "Friendly" },
+  { name: "Zubenelgenubi", character: "Casual" },
+  { name: "Vindemiatrix", character: "Gentle" },
+  { name: "Sadachbia", character: "Lively" },
+  { name: "Sadaltager", character: "Knowledgeable" },
+  { name: "Sulafat", character: "Warm" },
+] as const;
+
+export type GeminiVoiceName = (typeof GEMINI_VOICES)[number]["name"];
+
 export interface AdvisorPersona {
   id: string;
   name: string;
   title: string;
   organization: string;
-  voiceName: "Sulafat" | "Charon" | "Iapetus";
+  voiceName: GeminiVoiceName;
   voiceCharacter: string;
   voiceDirection: string;
   domain: string;
@@ -53,7 +88,7 @@ export const ADVISOR_PERSONAS: readonly AdvisorPersona[] = [
     name: "Priya Nair",
     title: "Technical Requirements Architect",
     organization: "FounderAlly Autonomous Co-Pilot",
-    voiceName: "Iapetus",
+    voiceName: "Erinome",
     voiceCharacter: "Clear",
     voiceDirection:
       "Speak clearly and precisely with a friendly, composed cadence. Emphasize decisions and acceptance criteria without sounding robotic.",
@@ -74,9 +109,27 @@ export function findAdvisorById(advisorId?: string): AdvisorPersona {
   );
 }
 
+export function findGeminiVoice(voiceName?: string) {
+  return GEMINI_VOICES.find((voice) => voice.name === voiceName);
+}
+
+export function resolveAdvisor(
+  advisorId?: string,
+  voiceName?: string
+): AdvisorPersona {
+  const advisor = findAdvisorById(advisorId);
+  const voice = findGeminiVoice(voiceName);
+  return voice
+    ? { ...advisor, voiceName: voice.name, voiceCharacter: voice.character }
+    : advisor;
+}
+
 export function findAdvisorByVoice(voiceName?: string): AdvisorPersona {
-  return (
-    ADVISOR_PERSONAS.find((advisor) => advisor.voiceName === voiceName) ||
-    DEFAULT_ADVISOR
-  );
+  const advisor =
+    ADVISOR_PERSONAS.find((item) => item.voiceName === voiceName) ||
+    DEFAULT_ADVISOR;
+  const voice = findGeminiVoice(voiceName);
+  return voice
+    ? { ...advisor, voiceName: voice.name, voiceCharacter: voice.character }
+    : advisor;
 }

@@ -18,7 +18,7 @@ export const GEMINI_CONFIG = {
   VOICES: {
     DEFAULT_ADVISOR: "Sulafat", // Warm strategic co-founder
     SPRINT_COACH: "Charon", // Informative operations lead
-    REQUIREMENTS_ARCHITECT: "Iapetus", // Clear technical BA
+    REQUIREMENTS_ARCHITECT: "Erinome", // Clear technical BA
   },
 
   // Audio parameters matching Google Live specification

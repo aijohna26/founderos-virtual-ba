@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { GoogleGenAI, Type, FunctionDeclaration, type GenerateContentResponse } from "@google/genai";
+import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
 
 export interface AIAction {
@@ -170,6 +170,35 @@ const recordLearningTool: FunctionDeclaration = {
   },
 };
 
+function normalizeInteractionSchema(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(normalizeInteractionSchema);
+  if (!value || typeof value !== "object") return value;
+
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+      key,
+      key === "type" && typeof item === "string"
+        ? item.toLowerCase()
+        : normalizeInteractionSchema(item),
+    ])
+  );
+}
+
+const interactionTools = [
+  getSprintContextTool,
+  getTicketTool,
+  createTicketTool,
+  updateTicketTool,
+  moveTicketTool,
+  recordCommitmentTool,
+  recordLearningTool,
+].map((tool) => ({
+  type: "function" as const,
+  name: tool.name,
+  description: tool.description,
+  parameters: normalizeInteractionSchema(tool.parameters),
+}));
+
 export async function POST(req: NextRequest) {
   try {
     const { message, venture, history, memories } = await req.json();
@@ -229,48 +258,36 @@ ${formattedMemories}`;
       try {
         const ai = new GoogleGenAI({ apiKey });
 
-        const contents: any[] = [];
+        const priorHistory = Array.isArray(history)
+          ? history
+              .slice(-7)
+              .filter((item: { sender?: string; text?: string }, index: number, items: Array<{ sender?: string; text?: string }>) => {
+                const isDuplicatedCurrentMessage =
+                  index === items.length - 1 &&
+                  item.sender === "user" &&
+                  item.text?.trim() === message.trim();
+                return Boolean(item.text) && !isDuplicatedCurrentMessage;
+              })
+              .map((item: { sender?: string; text?: string }) =>
+                `${item.sender === "ai" ? "ADVISOR" : "FOUNDER"}: ${item.text}`
+              )
+              .join("\n")
+          : "";
+        const interactionInput = priorHistory
+          ? `RECENT CONVERSATION\n${priorHistory}\n\nCURRENT FOUNDER MESSAGE\n${message}`
+          : message;
 
-        if (Array.isArray(history) && history.length > 0) {
-          for (const msg of history.slice(-6)) {
-            if (msg.sender === "user" && msg.text) {
-              contents.push({ role: "user", parts: [{ text: msg.text }] });
-            } else if (msg.sender === "ai" && msg.text) {
-              contents.push({ role: "model", parts: [{ text: msg.text }] });
-            }
-          }
-        }
-
-        contents.push({
-          role: "user",
-          parts: [{ text: message }],
-        });
-
-        let response: GenerateContentResponse | null = null;
+        let response: Awaited<ReturnType<typeof ai.interactions.create>> | null = null;
         let modelUsed = "";
         let lastModelError: unknown;
         for (const model of GEMINI_CONFIG.TEXT_MODELS) {
           try {
-            response = await ai.models.generateContent({
+            response = await ai.interactions.create({
               model,
-              contents,
-              config: {
-                systemInstruction,
-                maxOutputTokens: 800,
-                tools: [
-                  {
-                    functionDeclarations: [
-                      getSprintContextTool,
-                      getTicketTool,
-                      createTicketTool,
-                      updateTicketTool,
-                      moveTicketTool,
-                      recordCommitmentTool,
-                      recordLearningTool,
-                    ],
-                  },
-                ],
-              },
+              input: interactionInput,
+              system_instruction: systemInstruction,
+              tools: interactionTools,
+              generation_config: { max_output_tokens: 800 },
             });
             modelUsed = model;
             break;
@@ -281,14 +298,16 @@ ${formattedMemories}`;
         }
         if (!response) throw lastModelError || new Error("No configured Gemini text model was available");
 
-        let replyText = response.text || "";
+        let replyText = response.output_text || "";
         const actions: AIAction[] = [];
 
-        const functionCalls = response.functionCalls;
+        const functionCalls = (response.steps || []).filter(
+          (step) => step.type === "function_call"
+        );
         if (Array.isArray(functionCalls) && functionCalls.length > 0) {
           for (const call of functionCalls) {
             const name = call.name;
-            const args = (call.args || {}) as Record<string, any>;
+            const args = (call.arguments || {}) as Record<string, any>;
 
             if (name === "create_ticket" || name === "create_card") {
               actions.push({
@@ -404,14 +423,36 @@ ${formattedMemories}`;
       } else {
         reply = `I couldn't resolve that ticket safely. Which exact ticket should I move?`;
       }
+    } else if (/\b(hello|hi|hey|good morning|good afternoon)\b/.test(lower)) {
+      const activeCard = inProgressCards[0]?.title || todayCards[0]?.title;
+      reply = activeCard
+        ? `Good to hear you. The active focus for ${venture?.name || "this sprint"} is "${activeCard}". What changed since the last check-in?`
+        : `Good to hear you. ${venture?.name || "This sprint"} has no active ticket yet—tell me the outcome you want today and I'll turn it into one.`;
+    } else if (/\b(blocked|blocker|stuck|problem|issue)\b/.test(lower)) {
+      const existingBlocker = blockedCards[0]?.title;
+      reply = existingBlocker
+        ? `The board already shows "${existingBlocker}" as blocked. Tell me what is preventing progress and the decision or person needed to unblock it.`
+        : `I don't see a blocked ticket on the board yet. Name the affected ticket and what is stopping it, and I'll help make the blocker explicit.`;
+    } else if (/\b(priority|prioritise|prioritize|focus|next)\b/.test(lower)) {
+      const focusCard = inProgressCards[0]?.title || todayCards[0]?.title || backlogCards[0]?.title;
+      reply = focusCard
+        ? `Based on the current board, "${focusCard}" is the clearest next focus because it is closest to the active sprint. What outcome will prove it is done?`
+        : `The board is empty, so the next priority should be the smallest test of "${venture?.problemStatement || "the core customer problem"}".`;
+    } else if (/\b(status|standup|progress|today|board)\b/.test(lower)) {
+      reply = `${venture?.name || "The venture"} currently has ${inProgressCards.length} in progress, ${todayCards.length} planned today, ${blockedCards.length} blocked, and ${doneCards.length} done. ${blockedCards.length > 0 ? `Start with "${blockedCards[0].title}".` : inProgressCards.length > 0 ? `The immediate focus is "${inProgressCards[0].title}".` : "Choose one Today ticket to start."}`;
     } else {
-      reply = `I'm tracking with you. What specific commitment or ticket are we focusing on today for ${venture?.name || "the sprint"}?`;
+      const captured = message.trim().replace(/\s+/g, " ").slice(0, 140);
+      const sprintFocus = inProgressCards[0]?.title || todayCards[0]?.title || venture?.problemStatement;
+      reply = sprintFocus
+        ? `You raised: "${captured}". The current sprint focus is "${sprintFocus}"—should this become a ticket, a commitment, or a decision against that goal?`
+        : `You raised: "${captured}". Tell me whether you want it captured as a ticket, a commitment, or a business learning.`;
     }
 
     return NextResponse.json({
       reply,
       actions,
-      modelUsed: "Google Gen AI Contextual Engine",
+      modelUsed: "FounderAlly local fallback",
+      degraded: true,
     });
   } catch (error) {
     console.error("AI Analyst API Error:", error);

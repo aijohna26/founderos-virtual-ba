@@ -1,8 +1,100 @@
 "use client";
 
-import { DEFAULT_ADVISOR } from "@/lib/config/advisorPersonas";
+import {
+  DEFAULT_ADVISOR,
+  findGeminiVoice,
+} from "@/lib/config/advisorPersonas";
 
 export type VoiceState = "idle" | "listening" | "thinking" | "speaking" | "paused";
+
+// Browser speech voices vary wildly by OS and regularly sound nothing like the
+// selected Gemini persona. Keep this escape hatch opt-in instead of silently
+// impersonating a Gemini voice when server audio is unavailable.
+const BROWSER_TTS_FALLBACK_ENABLED =
+  process.env.NEXT_PUBLIC_ENABLE_BROWSER_TTS_FALLBACK === "true";
+
+type BrowserVoiceProfile = {
+  rate: number;
+  pitch: number;
+  gender: "female" | "male";
+};
+
+const FEMALE_GEMINI_VOICES = new Set([
+  "Achernar", "Aoede", "Autonoe", "Callirrhoe", "Despina", "Erinome",
+  "Gacrux", "Kore", "Laomedeia", "Leda", "Pulcherrima", "Sulafat",
+  "Vindemiatrix", "Zephyr",
+]);
+
+const VOICE_STYLE_PROFILES: Record<string, Pick<BrowserVoiceProfile, "rate" | "pitch">> = {
+  Bright: { rate: 1.04, pitch: 1.12 },
+  Upbeat: { rate: 1.08, pitch: 1.08 },
+  Informative: { rate: 0.94, pitch: 0.9 },
+  Firm: { rate: 0.91, pitch: 0.86 },
+  Excitable: { rate: 1.12, pitch: 1.14 },
+  Youthful: { rate: 1.05, pitch: 1.18 },
+  Breezy: { rate: 1.02, pitch: 1.08 },
+  "Easy-going": { rate: 0.92, pitch: 1.02 },
+  Breathy: { rate: 0.88, pitch: 0.96 },
+  Clear: { rate: 0.98, pitch: 0.98 },
+  Smooth: { rate: 0.9, pitch: 0.92 },
+  Gravelly: { rate: 0.86, pitch: 0.72 },
+  Soft: { rate: 0.88, pitch: 1.06 },
+  Even: { rate: 0.94, pitch: 0.94 },
+  Mature: { rate: 0.88, pitch: 0.82 },
+  Forward: { rate: 1.01, pitch: 1.0 },
+  Friendly: { rate: 1.0, pitch: 1.05 },
+  Casual: { rate: 0.97, pitch: 0.96 },
+  Gentle: { rate: 0.87, pitch: 1.04 },
+  Lively: { rate: 1.1, pitch: 1.1 },
+  Knowledgeable: { rate: 0.91, pitch: 0.88 },
+  Warm: { rate: 0.9, pitch: 1.02 },
+};
+
+const BROWSER_FEMALE_VOICE_PATTERNS = [
+  "samantha", "karen", "moira", "tessa", "fiona", "serena", "victoria",
+  "zira", "aria", "jenny", "female", "google uk english female",
+];
+
+const BROWSER_MALE_VOICE_PATTERNS = [
+  "daniel", "alex", "aaron", "arthur", "oliver", "rishi", "david",
+  "guy", "ryan", "male", "google uk english male",
+];
+
+function voiceNameHash(value: string): number {
+  return Array.from(value).reduce((total, character) => total + character.charCodeAt(0), 0);
+}
+
+function getBrowserVoiceProfile(voiceName: string): BrowserVoiceProfile {
+  const geminiVoice = findGeminiVoice(voiceName);
+  const style = VOICE_STYLE_PROFILES[geminiVoice?.character || "Warm"] ||
+    VOICE_STYLE_PROFILES.Warm;
+
+  return {
+    ...style,
+    gender: FEMALE_GEMINI_VOICES.has(voiceName) ? "female" : "male",
+  };
+}
+
+function selectBrowserVoice(
+  voices: SpeechSynthesisVoice[],
+  voiceName: string,
+  gender: BrowserVoiceProfile["gender"]
+): SpeechSynthesisVoice | undefined {
+  const englishVoices = voices.filter((voice) => voice.lang.toLowerCase().startsWith("en"));
+  const pool = englishVoices.length > 0 ? englishVoices : voices;
+  const patterns = gender === "female"
+    ? BROWSER_FEMALE_VOICE_PATTERNS
+    : BROWSER_MALE_VOICE_PATTERNS;
+  const matchingVoices = pool.filter((voice) => {
+    const normalizedName = voice.name.toLowerCase();
+    return patterns.some((pattern) => normalizedName.includes(pattern));
+  });
+  const candidates = matchingVoices.length > 0 ? matchingVoices : pool;
+
+  return candidates.length > 0
+    ? candidates[voiceNameHash(voiceName) % candidates.length]
+    : undefined;
+}
 
 export class VoiceEngine {
   private static recognition: any = null;
@@ -19,9 +111,13 @@ export class VoiceEngine {
   private static keepAliveTimer: any = null;
   private static stateChangeCallback: ((state: VoiceState) => void) | null = null;
   private static onInterruptCallback: (() => void) | null = null;
+  private static transcriptCallback: ((text: string, isFinal: boolean) => void) | null = null;
+  private static recognitionErrorCallback: ((error: string) => void) | null = null;
   private static audioContext: AudioContext | null = null;
   private static analyserNode: AnalyserNode | null = null;
   private static audioSourceNode: MediaElementAudioSourceNode | null = null;
+  private static speechGeneration = 0;
+  private static ttsAbortController: AbortController | null = null;
 
   // Clean markdown, code blocks, bullet points and JSON from text for clear, natural speech
   static cleanTextForSpeech(text: string): string {
@@ -95,6 +191,8 @@ export class VoiceEngine {
     this.unlockAudio();
     this.stateChangeCallback = onStateChange;
     this.onInterruptCallback = onInterrupt || null;
+    this.transcriptCallback = onTranscript;
+    this.recognitionErrorCallback = onError;
 
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -150,16 +248,16 @@ export class VoiceEngine {
           }
 
           if (finalTranscript.trim().length > 0) {
-            onTranscript(finalTranscript.trim(), true);
+            VoiceEngine.transcriptCallback?.(finalTranscript.trim(), true);
           } else if (interimTranscript.trim().length > 0) {
-            onTranscript(interimTranscript.trim(), false);
+            VoiceEngine.transcriptCallback?.(interimTranscript.trim(), false);
           }
         };
 
         this.recognition.onerror = (event: any) => {
           if (event.error !== "no-speech") {
             console.warn("Speech recognition notice:", event.error);
-            onError(event.error);
+            VoiceEngine.recognitionErrorCallback?.(event.error);
           }
         };
 
@@ -261,6 +359,9 @@ export class VoiceEngine {
     }
 
     this.stopSpeaking();
+    const speechGeneration = ++this.speechGeneration;
+    const abortController = new AbortController();
+    this.ttsAbortController = abortController;
     this.isSpeaking = true;
     this.recentlySpokenSentences.push(cleanText);
     if (this.recentlySpokenSentences.length > 5) {
@@ -280,12 +381,16 @@ export class VoiceEngine {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: cleanText, voice: voiceName }),
+        signal: abortController.signal,
       });
+
+      if (speechGeneration !== this.speechGeneration) return;
 
       const contentType = res.headers.get("content-type") || "";
 
       if (res.ok && contentType.includes("audio")) {
         const blob = await res.blob();
+        if (speechGeneration !== this.speechGeneration) return;
         const audioUrl = URL.createObjectURL(blob);
         this.currentAudioUrl = audioUrl;
 
@@ -313,6 +418,7 @@ export class VoiceEngine {
         }
 
         audio.onplay = () => {
+          if (speechGeneration !== VoiceEngine.speechGeneration) return;
           VoiceEngine.isSpeaking = true;
           if (VoiceEngine.stateChangeCallback) {
             VoiceEngine.stateChangeCallback("speaking");
@@ -321,6 +427,7 @@ export class VoiceEngine {
         };
 
         const handleAudioEnd = () => {
+          if (speechGeneration !== VoiceEngine.speechGeneration) return;
           VoiceEngine.isSpeaking = false;
           VoiceEngine.lastSpokenEndTime = Date.now();
           if (VoiceEngine.currentAudioUrl) {
@@ -346,18 +453,53 @@ export class VoiceEngine {
         audio.onerror = () => handleAudioEnd();
 
         await audio.play();
+        if (speechGeneration === this.speechGeneration) {
+          this.ttsAbortController = null;
+        }
         return;
+      } else {
+        console.warn(
+          `Gemini TTS returned ${res.status} for ${voiceName}.`
+        );
       }
     } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      if (speechGeneration !== this.speechGeneration) return;
       console.warn("HD Audio streaming notice:", err);
     }
 
-    // 2. Fallback to Browser Neural Synthesis
-    this.speakWithBrowserNeural(cleanText, onStart, onEnd);
+    if (speechGeneration !== this.speechGeneration) return;
+    this.ttsAbortController = null;
+
+    if (BROWSER_TTS_FALLBACK_ENABLED) {
+      this.speakWithBrowserNeural(
+        cleanText,
+        voiceName,
+        speechGeneration,
+        onStart,
+        onEnd
+      );
+      return;
+    }
+
+    // Preserve the text/microphone conversation without substituting an
+    // unrelated OS voice for the selected Gemini advisor.
+    this.isSpeaking = false;
+    this.lastSpokenEndTime = Date.now();
+    if (this.shouldBeListening) {
+      setTimeout(() => {
+        if (speechGeneration === this.speechGeneration) this.startListening();
+      }, 100);
+    } else if (this.stateChangeCallback) {
+      this.stateChangeCallback("idle");
+    }
+    if (onEnd) onEnd();
   }
 
   private static speakWithBrowserNeural(
     cleanText: string,
+    voiceName: string,
+    speechGeneration: number,
     onStart?: () => void,
     onEnd?: () => void
   ): void {
@@ -375,17 +517,14 @@ export class VoiceEngine {
       this.currentUtterance = utterance;
       this.activeUtterances.add(utterance);
 
-      utterance.rate = 1.0;
-      utterance.pitch = 1.0;
+      const profile = getBrowserVoiceProfile(voiceName);
+      utterance.rate = profile.rate;
+      utterance.pitch = profile.pitch;
       utterance.volume = 1.0;
 
       const voices = window.speechSynthesis.getVoices();
       if (voices && voices.length > 0) {
-        const preferredVoice =
-          voices.find((v) => v.lang === "en-US" && (v.name.includes("Samantha") || v.name.includes("Aria") || v.name.includes("Jenny") || v.name.includes("Google US English"))) ||
-          voices.find((v) => v.lang.startsWith("en") && v.name.includes("Natural")) ||
-          voices.find((v) => v.lang === "en-US") ||
-          voices[0];
+        const preferredVoice = selectBrowserVoice(voices, voiceName, profile.gender);
 
         if (preferredVoice) {
           utterance.voice = preferredVoice;
@@ -393,6 +532,10 @@ export class VoiceEngine {
       }
 
       const handleSpeechComplete = () => {
+        if (speechGeneration !== VoiceEngine.speechGeneration) {
+          VoiceEngine.activeUtterances.delete(utterance);
+          return;
+        }
         VoiceEngine.isSpeaking = false;
         VoiceEngine.lastSpokenEndTime = Date.now();
         VoiceEngine.activeUtterances.delete(utterance);
@@ -418,6 +561,7 @@ export class VoiceEngine {
       };
 
       utterance.onstart = () => {
+        if (speechGeneration !== VoiceEngine.speechGeneration) return;
         VoiceEngine.isSpeaking = true;
         if (VoiceEngine.stateChangeCallback) {
           VoiceEngine.stateChangeCallback("speaking");
@@ -429,6 +573,7 @@ export class VoiceEngine {
       utterance.onerror = () => handleSpeechComplete();
 
       setTimeout(() => {
+        if (speechGeneration !== VoiceEngine.speechGeneration) return;
         try {
           if (window.speechSynthesis.paused) {
             window.speechSynthesis.resume();
@@ -447,6 +592,9 @@ export class VoiceEngine {
 
   // Stop speaking immediately (Barge-in / Cancel)
   static stopSpeaking(): void {
+    this.speechGeneration += 1;
+    this.ttsAbortController?.abort();
+    this.ttsAbortController = null;
     this.isSpeaking = false;
     this.lastSpokenEndTime = Date.now();
 
@@ -482,7 +630,7 @@ export class VoiceEngine {
 
     if (this.shouldBeListening) {
       setTimeout(() => {
-        this.startListening();
+        if (this.shouldBeListening) this.startListening();
       }, 100);
     }
   }

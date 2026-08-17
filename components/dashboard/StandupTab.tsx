@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { Venture, VentureStore, KanbanCard } from "@/lib/store/ventureStore";
 import { VoiceSphereVisualizer, type BusinessPersona, type AgentAudioState } from "@/components/dashboard/VoiceSphereVisualizer";
-import { findAdvisorById } from "@/lib/config/advisorPersonas";
+import { resolveAdvisor } from "@/lib/config/advisorPersonas";
 import { GeminiLiveService, LiveSessionState } from "@/lib/agent/geminiLiveService";
 import { StandupPrepEngine } from "@/lib/agent/standupPrepEngine";
 import { CommitmentStore } from "@/lib/store/commitmentStore";
@@ -33,7 +33,7 @@ export function StandupTab({
   setIsDailyCallActive,
   setActiveTab,
 }: StandupTabProps) {
-  const selectedPersona = findAdvisorById(venture.advisorId);
+  const selectedPersona = resolveAdvisor(venture.advisorId, venture.advisorVoiceName);
   const [sessionState, setSessionState] = useState<LiveSessionState>("idle");
   const [isMuted, setIsMuted] = useState(false);
   const [interimTranscript, setInterimTranscript] = useState("");

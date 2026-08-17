@@ -3,7 +3,7 @@ import { GoogleGenAI } from "@google/genai";
 import { auth } from "@clerk/nextjs/server";
 import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
 import { buildGeminiLiveConfig, type GeminiLiveContext } from "@/lib/agent/geminiLiveConfig";
-import { ADVISOR_PERSONAS } from "@/lib/config/advisorPersonas";
+import { ADVISOR_PERSONAS, findGeminiVoice } from "@/lib/config/advisorPersonas";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
 
     const body = (await req.json()) as Partial<GeminiLiveContext> & { advisorId?: string };
     const advisor = ADVISOR_PERSONAS.find((item) => item.id === body.advisorId);
+    const requestedVoice = findGeminiVoice(body.voiceName);
     if (!body.venture || !advisor) {
       return NextResponse.json(
         { error: "Venture context and a supported advisor are required." },
@@ -40,7 +41,7 @@ export async function POST(req: NextRequest) {
       commitments: Array.isArray(body.commitments) ? body.commitments : [],
       learnings: Array.isArray(body.learnings) ? body.learnings : [],
       memories: Array.isArray(body.memories) ? body.memories : [],
-      voiceName: advisor.voiceName,
+      voiceName: requestedVoice?.name || advisor.voiceName,
       advisor: {
         name: advisor.name,
         title: advisor.title,
@@ -51,7 +52,10 @@ export async function POST(req: NextRequest) {
     const liveConfig = buildGeminiLiveConfig(context);
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
     const newSessionExpiresAt = new Date(Date.now() + 60 * 1000);
-    const ai = new GoogleGenAI({ apiKey });
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: { apiVersion: "v1beta" },
+    });
     const token = await ai.authTokens.create({
       config: {
         uses: 1,
@@ -61,7 +65,6 @@ export async function POST(req: NextRequest) {
           model: GEMINI_CONFIG.LIVE_MODEL,
           config: liveConfig,
         },
-        httpOptions: { apiVersion: "v1alpha" },
       },
     });
 

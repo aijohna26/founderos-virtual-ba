@@ -43,7 +43,7 @@ flowchart TD
 - Uses `@google/genai` `ai.live.connect()` with a one-use, short-lived token constrained by the server to the configured Live model and session configuration.
 - Native 16kHz PCM audio streaming with Google's **`Kore`** and **`Aoede`** expressive neural voices.
 - Natural barge-in interruption: when the founder speaks mid-sentence, playback halts and the agent answers.
-- If token provisioning, microphone access, or Live transport fails, the UI switches to the existing browser speech recognition → `/api/ai-analyst` → TTS/browser voice path.
+- If token provisioning, microphone access, or Live transport fails, the UI switches to browser speech recognition → `/api/ai-analyst` → server-side Gemini TTS. Low-quality OS speech synthesis is disabled by default; it can be explicitly enabled with `NEXT_PUBLIC_ENABLE_BROWSER_TTS_FALLBACK=true`.
 
 ### 2. The 7 Authoritative MVP Tools
 1. `get_sprint_context` — Retrieves current sprint goal, board columns, active commitments, and completion rate.
@@ -97,7 +97,7 @@ Do not define or use `NEXT_PUBLIC_GEMINI_API_KEY`. The permanent Gemini credenti
 
 Model configuration is centralized in `lib/config/geminiConfig.ts`. Live audio uses `gemini-3.1-flash-live-preview`. Text requests try `gemini-3.7-flash`, `gemini-flash-latest`, then `gemini-3.1-flash-lite`. TTS fallback uses the dedicated `gemini-3.1-flash-tts-preview` model; text-only Flash models cannot replace a Live or TTS model.
 
-Advisor identity and voice configuration lives in `lib/config/advisorPersonas.ts`. Maya Chen uses Gemini Sulafat (warm), Marcus Reed uses Charon (informative), and Priya Nair uses Iapetus (clear). Each venture persists its own advisor selection, and that project-specific identity, portrait, voice, and speaking direction are applied to both Gemini Live and server-generated TTS fallback audio.
+Advisor identity and voice configuration lives in `lib/config/advisorPersonas.ts`. Maya Chen defaults to Gemini Sulafat (warm), Marcus Reed to Charon (informative), and Priya Nair to Erinome (clear). The Co-Pilot picker also exposes all 30 Gemini prebuilt voices. Each venture persists its own advisor and voice selection, and that project-specific identity, portrait, voice, and speaking direction are applied to both Gemini Live and server-generated TTS fallback audio.
 
 ### 3. Run Development Server
 ```bash
