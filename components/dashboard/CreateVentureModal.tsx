@@ -1,0 +1,234 @@
+"use client";
+
+import React, { useState } from "react";
+import { Sparkles, Plus, Rocket, X } from "lucide-react";
+import { VentureStore, Venture } from "@/lib/store/ventureStore";
+
+export interface CreateVentureModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onVentureCreated: (venture: Venture) => void;
+}
+
+export function CreateVentureModal({
+  isOpen,
+  onClose,
+  onVentureCreated,
+}: CreateVentureModalProps) {
+  const [name, setName] = useState("");
+  const [tagline, setTagline] = useState("");
+  const [targetCustomer, setTargetCustomer] = useState("");
+  const [problemStatement, setProblemStatement] = useState("");
+  const [solutionSummary, setSolutionSummary] = useState("");
+  const [stage, setStage] = useState("Ideation & Problem Discovery");
+  const [loading, setLoading] = useState(false);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!name.trim() || !problemStatement.trim()) return;
+
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/generate-venture-analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: name.trim(),
+          tagline: tagline.trim() || `${name} — AI Driven Solution`,
+          targetCustomer: targetCustomer.trim() || "Target early adopters",
+          problemStatement: problemStatement.trim(),
+          solutionSummary: solutionSummary.trim() || tagline.trim(),
+          stage,
+        }),
+      });
+
+      const analysis = await res.json();
+      const id = name.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-" + Date.now().toString().slice(-4);
+
+      const newVenture: Venture = {
+        id,
+        name: name.trim(),
+        tagline: tagline.trim() || `${name} — AI Driven Solution`,
+        status: "Validation",
+        color: "bg-indigo-600",
+        dot: "bg-indigo-500",
+        stage: stage || "Discovery & Validation",
+        targetCustomer: targetCustomer.trim() || "Target early adopters",
+        problemStatement: problemStatement.trim(),
+        solutionSummary: solutionSummary.trim() || tagline.trim(),
+        strategy: analysis.strategy || {
+          tam: "Estimating market sizing...",
+          sam: "Estimating addressable segment...",
+          som: "Estimating obtainable customers...",
+          icp: targetCustomer.trim(),
+          valueProp: tagline.trim(),
+          moat: "Proprietary domain workflows.",
+          alternatives: "Manual spreadsheets & legacy tools."
+        },
+        columns: analysis.columns || {
+          backlog: { name: "BACKLOG", items: [] },
+          today: { name: "TODAY", items: [] },
+          in_progress: { name: "IN PROGRESS", items: [] },
+          done: { name: "DONE", items: [] },
+          blocked: { name: "BLOCKED", items: [] },
+        },
+        assumptions: analysis.assumptions || [],
+        priorities: analysis.priorities || [],
+        milestones: analysis.milestones || [],
+        chatHistory: [
+          {
+            id: "ch-init",
+            sender: "ai",
+            text: analysis.initialAiMessage || `Welcome to ${name}! I've completed an initial business discovery analysis. What should we stress-test first?`,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+          },
+        ],
+        createdAt: new Date().toISOString(),
+      };
+
+      const existing = VentureStore.getVentures();
+      existing.push(newVenture);
+      VentureStore.saveVentures(existing);
+
+      setLoading(false);
+      onVentureCreated(newVenture);
+      onClose();
+    } catch (err) {
+      console.error("Failed to generate venture analysis:", err);
+      // Fallback
+      const created = VentureStore.createVenture({
+        name: name.trim(),
+        tagline: tagline.trim() || `${name} — AI Driven Solution`,
+        targetCustomer: targetCustomer.trim() || "Early stage founders & operators",
+        problemStatement: problemStatement.trim(),
+        solutionSummary: solutionSummary.trim() || tagline.trim(),
+        stage,
+      });
+      setLoading(false);
+      onVentureCreated(created);
+      onClose();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
+      <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-xl w-full shadow-2xl border border-slate-200 space-y-6 max-h-[90vh] overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-blue-600 flex items-center justify-center text-white font-bold shadow-md shadow-blue-500/20">
+              <Rocket className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-xl font-black text-slate-900">Create New Venture</h2>
+              <p className="text-xs text-slate-500">
+                Initialize a dedicated AI Business Analyst workspace for your real startup.
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-2 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block mb-1.5">
+                Venture / Startup Name *
+              </label>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. LeadPulse or FounderAlly"
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block mb-1.5">
+                Current Stage
+              </label>
+              <select
+                value={stage}
+                onChange={(e) => setStage(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium"
+              >
+                <option value="Ideation & Problem Discovery">Ideation & Problem Discovery</option>
+                <option value="Customer Discovery & Validation">Customer Discovery & Validation</option>
+                <option value="MVP Build">MVP Build</option>
+                <option value="Live & Generating Revenue">Live & Generating Revenue</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block mb-1.5">
+              One-Line Tagline / Value Proposition
+            </label>
+            <input
+              type="text"
+              value={tagline}
+              onChange={(e) => setTagline(e.target.value)}
+              placeholder="e.g. Automated cold email personalization for B2B sales teams"
+              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block mb-1.5">
+              Target Customer (Ideal Customer Profile)
+            </label>
+            <input
+              type="text"
+              value={targetCustomer}
+              onChange={(e) => setTargetCustomer(e.target.value)}
+              placeholder="e.g. Digital marketing agency owners with 5-20 clients"
+              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block mb-1.5">
+              Core Problem Being Solved *
+            </label>
+            <textarea
+              value={problemStatement}
+              onChange={(e) => setProblemStatement(e.target.value)}
+              placeholder="Describe the primary friction, pain, or inefficiency your customers face today..."
+              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 h-24"
+              required
+            />
+          </div>
+
+          <div className="pt-2 flex items-center justify-end gap-3 border-t border-slate-100">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-5 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading || !name.trim() || !problemStatement.trim()}
+              className="px-6 py-2.5 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white shadow-md shadow-blue-500/25 flex items-center gap-2 transition-all"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>{loading ? "Initializing Workspace..." : "Create Venture Workspace"}</span>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}

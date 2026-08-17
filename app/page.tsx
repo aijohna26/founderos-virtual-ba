@@ -1,69 +1,145 @@
-import Image from "next/image";
+"use client";
+
+import React, { useState, useEffect } from "react";
+import Link from "next/link";
+import { Navbar } from "@/components/Navbar";
+import { HeroDashboardPreview } from "@/components/HeroDashboardPreview";
+import { FeatureHighlights } from "@/components/FeatureHighlights";
+import { Pricing } from "@/components/Pricing";
+import { CheckCircle2, Play, Sparkles } from "lucide-react";
+import { Show, SignInButton, SignUpButton } from "@clerk/nextjs";
 
 export default function Home() {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+    <div className="min-h-screen bg-slate-50 flex flex-col font-sans text-slate-900 selection:bg-blue-500 selection:text-white">
+      {/* Top Navbar */}
+      <Navbar />
+
+      {/* Main Hero Section */}
+      <main className="flex-1">
+        <section className="pt-8 pb-16 lg:pt-14 lg:pb-24 overflow-hidden">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
+              
+              {/* Hero Left Column (Copy & CTAs) */}
+              <div className="lg:col-span-5 space-y-6">
+                {/* Eyebrow Pill */}
+                <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-blue-100/70 border border-blue-200 text-blue-700 font-bold text-xs uppercase tracking-wider shadow-2xs">
+                  <Sparkles className="w-3.5 h-3.5 text-blue-600" />
+                  <span>YOUR AI BUSINESS ANALYST & CO-FOUNDER</span>
+                </div>
+
+                {/* Main Headline */}
+                <h1 className="text-4xl sm:text-5xl lg:text-6xl font-black text-slate-900 tracking-tight leading-[1.1]">
+                  Your AI Business Analyst{" "}
+                  <span className="text-blue-600 block sm:inline">for every founder decision.</span>
+                </h1>
+
+                {/* Subtitle */}
+                <p className="text-base sm:text-lg text-slate-600 font-normal leading-relaxed">
+                  FounderAlly is your AI Business Analyst and co-pilot. From idea to scale, get clarity on what to build, why it matters, and how to make it succeed.
+                </p>
+
+                {/* Bullet Points */}
+                <ul className="space-y-3 pt-2 text-sm sm:text-base font-medium text-slate-700">
+                  <li className="flex items-start gap-3">
+                    <CheckCircle2 className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+                    <span>Ask anything about your idea, market or strategy</span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <CheckCircle2 className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+                    <span>Get expert analysis, data-backed insights and <strong>reports</strong></span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <CheckCircle2 className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+                    <span><strong>Validate assumptions</strong> and <strong>reduce risk</strong></span>
+                  </li>
+                  <li className="flex items-start gap-3">
+                    <CheckCircle2 className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+                    <span>Build better plans, faster — with AI by your side</span>
+                  </li>
+                </ul>
+
+                {/* Action Buttons */}
+                <div className="pt-4 flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
+                  {!mounted ? (
+                    <Link
+                      href="/sign-up"
+                      className="inline-flex items-center justify-center gap-2 px-7 py-4 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-base transition-all shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/35 hover:-translate-y-0.5"
+                    >
+                      <span>Get Started with AI Analyst</span>
+                      <Sparkles className="w-4 h-4 fill-white" />
+                    </Link>
+                  ) : (
+                    <>
+                      <Show when="signed-out">
+                        <SignUpButton mode="modal" fallbackRedirectUrl="/dashboard">
+                          <button className="inline-flex items-center justify-center gap-2 px-7 py-4 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-base transition-all shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/35 hover:-translate-y-0.5 cursor-pointer">
+                            <span>Get Started with AI Analyst</span>
+                            <Sparkles className="w-4 h-4 fill-white" />
+                          </button>
+                        </SignUpButton>
+                      </Show>
+
+                      <Show when="signed-in">
+                        <Link
+                          href="/dashboard"
+                          className="inline-flex items-center justify-center gap-2 px-7 py-4 rounded-full bg-blue-600 hover:bg-blue-700 text-white font-bold text-base transition-all shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/35 hover:-translate-y-0.5"
+                        >
+                          <span>Open AI Analyst Workspace</span>
+                          <Sparkles className="w-4 h-4 fill-white" />
+                        </Link>
+                      </Show>
+                    </>
+                  )}
+
+                  <a
+                    href="#how-it-works"
+                    className="inline-flex items-center justify-center gap-2 px-6 py-4 rounded-full border border-blue-300 hover:border-blue-400 bg-white hover:bg-blue-50/50 text-blue-600 font-bold text-base transition-all shadow-xs"
+                  >
+                    <div className="w-5 h-5 rounded-full border-2 border-blue-600 flex items-center justify-center pl-0.5">
+                      <Play className="w-2.5 h-2.5 fill-blue-600 text-blue-600" />
+                    </div>
+                    <span>See How It Works</span>
+                  </a>
+                </div>
+              </div>
+
+              {/* Hero Right Column (Interactive Dashboard Preview) */}
+              <div className="lg:col-span-7">
+                <HeroDashboardPreview />
+              </div>
+
+            </div>
+          </div>
+        </section>
+
+        {/* Feature Highlights Bar */}
+        <FeatureHighlights />
+
+        {/* Pricing Section (In Dollars) */}
+        <Pricing />
       </main>
+
+      {/* Footer */}
+      <footer className="bg-slate-900 text-slate-400 py-10 border-t border-slate-800 text-xs text-center">
+        <div className="max-w-7xl mx-auto px-4 space-y-3">
+          <p className="font-semibold text-slate-300">
+            FounderAlly © 2026. Your AI Business Analyst for Every Founder Decision.
+          </p>
+          <div className="flex justify-center space-x-6">
+            <a href="#" className="hover:text-white transition-colors">Privacy Policy</a>
+            <a href="#" className="hover:text-white transition-colors">Terms of Service</a>
+            <a href="#" className="hover:text-white transition-colors">Contact Support</a>
+          </div>
+        </div>
+      </footer>
     </div>
   );
 }
