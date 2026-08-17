@@ -18,10 +18,12 @@ import {
   Database,
   X,
   Clock,
-  Calendar
+  Calendar,
+  Radio
 } from "lucide-react";
 import { Venture, VentureStore, ChatMessage, KanbanCard } from "@/lib/store/ventureStore";
 import { VoiceEngine, VoiceState } from "@/lib/voice/voiceEngine";
+import { GeminiLiveClient } from "@/lib/voice/geminiLiveClient";
 import { MemoryService, MemoryFact } from "@/lib/db/memoryService";
 
 export interface AiAnalystPanelProps {
@@ -56,6 +58,7 @@ export function AiAnalystPanel({
   const [memories, setMemories] = useState<MemoryFact[]>([]);
   const chatBottomRef = useRef<HTMLDivElement>(null);
   const latestMsgRef = useRef<HTMLDivElement>(null);
+  const liveClientRef = useRef<GeminiLiveClient | null>(null);
 
   const messages = venture?.chatHistory || [
     {
@@ -99,12 +102,12 @@ export function AiAnalystPanel({
   const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const pendingTranscriptRef = useRef<string>("");
 
-  // Initialize Speech Recognition & Voice Engine with Barge-In & Silence Detection
+  // Initialize Speech Recognition & Voice Engine with Echo Prevention & Silence Detection
   useEffect(() => {
     VoiceEngine.preloadVoices();
     VoiceEngine.initRecognition(
       (transcript, isFinal) => {
-        if (!transcript.trim()) return;
+        if (!transcript.trim() || isSpeakingAI) return;
 
         setInputVal(transcript);
         pendingTranscriptRef.current = transcript.trim();
@@ -117,7 +120,7 @@ export function AiAnalystPanel({
         // Wait for the user to finish speaking (600ms on final or 1300ms on pause)
         const delay = isFinal ? 600 : 1300;
         silenceTimerRef.current = setTimeout(() => {
-          if (pendingTranscriptRef.current.trim().length > 0 && !isTyping) {
+          if (pendingTranscriptRef.current.trim().length > 0 && !isTyping && !isSpeakingAI) {
             const textToSubmit = pendingTranscriptRef.current.trim();
             pendingTranscriptRef.current = "";
             submitMessage(textToSubmit);
@@ -381,10 +384,63 @@ export function AiAnalystPanel({
     }
   };
 
+  const handleLiveToolCall = (name: string, args: Record<string, any>) => {
+    let currentColumns = { ...venture.columns };
+    if (name === "create_card" && args.title) {
+      const colKey = (args.column || "today") as keyof Venture["columns"];
+      const newCard: KanbanCard = {
+        id: "c-live-" + Date.now(),
+        title: args.title,
+        category: args.category || "Feature",
+        priority: args.priority || "High",
+        owner: "YOU",
+      };
+      const existing = currentColumns[colKey]?.items || [];
+      currentColumns = {
+        ...currentColumns,
+        [colKey]: { ...currentColumns[colKey], items: [...existing, newCard] },
+      };
+      const updated = { ...venture, columns: currentColumns };
+      VentureStore.updateVenture(updated);
+      onUpdateVenture(updated);
+    } else if (name === "move_card" && args.cardTitle && args.toColumn) {
+      const toCol = args.toColumn as keyof Venture["columns"];
+      let foundCard: KanbanCard | null = null;
+      let fromCol: keyof Venture["columns"] | null = null;
+      for (const colName of Object.keys(currentColumns) as (keyof Venture["columns"])[]) {
+        const match = currentColumns[colName]?.items?.find((c) =>
+          c.title.toLowerCase().includes(args.cardTitle.toLowerCase().slice(0, 10))
+        );
+        if (match) {
+          foundCard = match;
+          fromCol = colName;
+          break;
+        }
+      }
+      if (foundCard && fromCol && fromCol !== toCol) {
+        const updatedFrom = (currentColumns[fromCol]?.items || []).filter((c) => c.id !== foundCard!.id);
+        const updatedTo = [...(currentColumns[toCol]?.items || []), { ...foundCard, completed: toCol === "done" }];
+        currentColumns = {
+          ...currentColumns,
+          [fromCol]: { ...currentColumns[fromCol], items: updatedFrom },
+          [toCol]: { ...currentColumns[toCol], items: updatedTo },
+        };
+        const updated = { ...venture, columns: currentColumns };
+        VentureStore.updateVenture(updated);
+        onUpdateVenture(updated);
+      }
+    }
+  };
+
   const toggleCall = () => {
     const nextCall = !isDailyCallActive;
     setIsDailyCallActive(nextCall);
+
     if (!nextCall) {
+      if (liveClientRef.current) {
+        liveClientRef.current.disconnect();
+        liveClientRef.current = null;
+      }
       VoiceEngine.stopSpeaking();
       VoiceEngine.stopListening();
       setIsSpeakingAI(false);
@@ -393,6 +449,7 @@ export function AiAnalystPanel({
       // Unlock audio and ensure voice is active
       setVoiceAudioEnabled(true);
       VoiceEngine.unlockAudio();
+
       const lastAiMsg = [...messages].reverse().find((m) => m.sender === "ai");
       const greeting =
         lastAiMsg?.text ||

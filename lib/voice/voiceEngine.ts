@@ -15,6 +15,7 @@ export class VoiceEngine {
   private static keepAliveTimer: any = null;
   private static stateChangeCallback: ((state: VoiceState) => void) | null = null;
   private static onInterruptCallback: (() => void) | null = null;
+  private static speechCooldownTimer: any = null;
 
   // Clean markdown, code blocks, bullet points and JSON from text for clear, natural speech
   static cleanTextForSpeech(text: string): string {
@@ -62,7 +63,7 @@ export class VoiceEngine {
     } catch (e) {}
   }
 
-  // Initialize Speech Recognition with Voice Barge-In / Interruption
+  // Initialize Speech Recognition with Echo Cancellation & Turn-Taking
   static initRecognition(
     onTranscript: (text: string, isFinal: boolean) => void,
     onStateChange: (state: VoiceState) => void,
@@ -98,6 +99,11 @@ export class VoiceEngine {
         };
 
         this.recognition.onresult = (event: any) => {
+          // 🛑 ECHO PREVENTION: Ignore mic input if AI is currently speaking to prevent stutter feedback loops!
+          if (VoiceEngine.isSpeaking) {
+            return;
+          }
+
           let interimTranscript = "";
           let finalTranscript = "";
 
@@ -106,20 +112,6 @@ export class VoiceEngine {
               finalTranscript += event.results[i][0].transcript;
             } else {
               interimTranscript += event.results[i][0].transcript;
-            }
-          }
-
-          const rawText = (finalTranscript || interimTranscript).trim();
-
-          // 🚨 VOICE BARGE-IN: If AI is speaking and user speaks, stop AI immediately!
-          if (VoiceEngine.isSpeaking && rawText.length > 0) {
-            console.log("⚡ User interrupted AI voice! Stopping playback and listening to user...");
-            VoiceEngine.stopSpeaking();
-            if (VoiceEngine.onInterruptCallback) {
-              VoiceEngine.onInterruptCallback();
-            }
-            if (VoiceEngine.stateChangeCallback) {
-              VoiceEngine.stateChangeCallback("listening");
             }
           }
 
@@ -139,16 +131,16 @@ export class VoiceEngine {
 
         this.recognition.onend = () => {
           this.isListening = false;
-          // Auto-restart loop for continuous 2-way conversation when call is active
-          if (this.shouldBeListening) {
+          // Auto-restart loop for continuous 2-way conversation when call is active and AI is NOT speaking
+          if (this.shouldBeListening && !this.isSpeaking) {
             setTimeout(() => {
-              if (this.shouldBeListening) {
+              if (this.shouldBeListening && !this.isSpeaking) {
                 try {
                   this.recognition.start();
                   this.isListening = true;
                 } catch (e) {}
               }
-            }, 100);
+            }, 150);
           } else {
             if (!this.isSpeaking) {
               onStateChange("idle");
@@ -166,7 +158,7 @@ export class VoiceEngine {
   // Start listening to microphone
   static startListening(): void {
     this.shouldBeListening = true;
-    if (this.recognition && !this.isListening) {
+    if (this.recognition && !this.isListening && !this.isSpeaking) {
       try {
         this.recognition.start();
         this.isListening = true;
@@ -213,10 +205,18 @@ export class VoiceEngine {
       return;
     }
 
-    // Stop any currently playing audio or speech
+    // Stop previous audio & pause mic during speech to avoid speaker echo
     this.stopSpeaking();
+    this.isSpeaking = true;
 
-    // 1. Attempt High-Definition Server-Side Audio Stream (ElevenLabs / OpenAI HD)
+    if (this.recognition) {
+      try {
+        this.recognition.stop();
+      } catch (e) {}
+      this.isListening = false;
+    }
+
+    // 1. Attempt High-Definition Server-Side Audio Stream (Google Cloud Journey / Gemini Voice)
     try {
       const res = await fetch("/api/tts", {
         method: "POST",
@@ -250,10 +250,13 @@ export class VoiceEngine {
           }
           VoiceEngine.currentAudio = null;
 
+          // Resume listening 300ms after audio playback ends (allowing speaker room reverb to clear)
           if (VoiceEngine.shouldBeListening) {
-            if (VoiceEngine.stateChangeCallback) {
-              VoiceEngine.stateChangeCallback("listening");
-            }
+            setTimeout(() => {
+              if (VoiceEngine.shouldBeListening && !VoiceEngine.isSpeaking) {
+                VoiceEngine.startListening();
+              }
+            }, 300);
           } else if (VoiceEngine.stateChangeCallback) {
             VoiceEngine.stateChangeCallback("idle");
           }
@@ -271,10 +274,10 @@ export class VoiceEngine {
         return;
       }
     } catch (err) {
-      console.warn("HD Audio streaming unavailable, using enhanced neural browser fallback:", err);
+      console.warn("HD Audio streaming notice:", err);
     }
 
-    // 2. Fallback: High-Quality Browser Neural Synthesis (Enhanced Tuning)
+    // 2. Fallback: High-Quality Browser Neural Synthesis
     this.speakWithBrowserNeural(cleanText, onStart, onEnd);
   }
 
@@ -285,6 +288,7 @@ export class VoiceEngine {
     onEnd?: () => void
   ): void {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      this.isSpeaking = false;
       if (onEnd) onEnd();
       return;
     }
@@ -336,10 +340,13 @@ export class VoiceEngine {
           VoiceEngine.keepAliveTimer = null;
         }
 
+        // Resume mic 300ms after speech ends to prevent hearing speaker echo
         if (VoiceEngine.shouldBeListening) {
-          if (VoiceEngine.stateChangeCallback) {
-            VoiceEngine.stateChangeCallback("listening");
-          }
+          setTimeout(() => {
+            if (VoiceEngine.shouldBeListening && !VoiceEngine.isSpeaking) {
+              VoiceEngine.startListening();
+            }
+          }, 300);
         } else if (VoiceEngine.stateChangeCallback) {
           VoiceEngine.stateChangeCallback("idle");
         }
@@ -387,12 +394,15 @@ export class VoiceEngine {
       }, 50);
     } catch (err) {
       console.error("Failed to execute TTS speak:", err);
+      this.isSpeaking = false;
       if (onEnd) onEnd();
     }
   }
 
-  // Stop speaking immediately (supports stopping both HTML5 Audio stream & Web Speech)
+  // Stop speaking immediately
   static stopSpeaking(): void {
+    this.isSpeaking = false;
+
     if (typeof window !== "undefined") {
       // 1. Stop HTML5 streaming audio
       if (this.currentAudio) {
@@ -421,7 +431,6 @@ export class VoiceEngine {
         this.keepAliveTimer = null;
       }
 
-      this.isSpeaking = false;
       this.currentUtterance = null;
       this.activeUtterances.clear();
     }
