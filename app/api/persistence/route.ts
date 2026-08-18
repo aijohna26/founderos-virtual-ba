@@ -1,16 +1,20 @@
 import { auth } from "@clerk/nextjs/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-type Resource = "commitments" | "learnings" | "memories" | "operations";
+type Resource = "ventures" | "commitments" | "learnings" | "memories" | "documents" | "operations";
 
 const TABLES: Record<Resource, string> = {
+  ventures: "founder_ventures",
   commitments: "founder_commitments",
   learnings: "founder_learnings",
   memories: "venture_memories",
+  documents: "venture_documents",
   operations: "ai_operation_logs",
 };
 
 const ALLOWED_COLUMNS: Record<Resource, Set<string>> = {
+  ventures: new Set(["id", "venture_id", "workspace", "created_at", "updated_at"]),
   commitments: new Set([
     "id", "venture_id", "commitment", "deadline", "status", "related_ticket_id",
     "source", "created_at", "completed_at",
@@ -21,6 +25,9 @@ const ALLOWED_COLUMNS: Record<Resource, Set<string>> = {
   ]),
   memories: new Set([
     "id", "venture_id", "category", "fact", "source", "confidence", "created_at",
+  ]),
+  documents: new Set([
+    "id", "venture_id", "title", "category", "content", "created_at", "updated_at",
   ]),
   operations: new Set([
     "id", "venture_id", "ceremony", "gemini_model", "tool_requested",
@@ -50,6 +57,39 @@ async function authenticatedUserId() {
   return isAuthenticated ? userId : null;
 }
 
+interface VentureAccess {
+  ownerUserId: string;
+  role: "owner" | "cofounder" | "member" | "advisor" | "external";
+  canEditBoard: boolean;
+}
+
+async function resolveVentureAccess(
+  supabase: SupabaseClient,
+  userId: string,
+  ventureId: string,
+): Promise<VentureAccess | null> {
+  const { data: owned } = await supabase
+    .from("founder_ventures")
+    .select("user_id")
+    .eq("user_id", userId)
+    .eq("venture_id", ventureId)
+    .maybeSingle();
+  if (owned) return { ownerUserId: userId, role: "owner", canEditBoard: true };
+  const { data: membership } = await supabase
+    .from("venture_memberships")
+    .select("owner_user_id,role,can_edit_board")
+    .eq("user_id", userId)
+    .eq("venture_id", ventureId)
+    .eq("status", "active")
+    .maybeSingle();
+  if (!membership) return null;
+  return {
+    ownerUserId: membership.owner_user_id,
+    role: membership.role,
+    canEditBoard: Boolean(membership.can_edit_board),
+  };
+}
+
 export async function GET(request: Request) {
   const userId = await authenticatedUserId();
   if (!userId) return Response.json({ error: "Unauthorized" }, { status: 401 });
@@ -57,7 +97,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const resource = url.searchParams.get("resource");
   const ventureId = url.searchParams.get("ventureId");
-  if (!isResource(resource) || !ventureId || ventureId.length > 160) {
+  if (!isResource(resource) || (resource !== "ventures" && !ventureId) || (ventureId?.length ?? 0) > 160) {
     return Response.json({ error: "Invalid resource or venture" }, { status: 400 });
   }
 
@@ -69,14 +109,45 @@ export async function GET(request: Request) {
     );
   }
 
+  if (resource === "ventures") {
+    const { data: owned, error: ownedError } = await supabase
+      .from(TABLES.ventures)
+      .select("*")
+      .eq("user_id", userId)
+      .order("updated_at", { ascending: false })
+      .limit(500);
+    if (ownedError) return Response.json({ error: "Persistence read failed" }, { status: 500 });
+    const { data: memberships } = await supabase
+      .from("venture_memberships")
+      .select("owner_user_id,venture_id")
+      .eq("user_id", userId)
+      .eq("status", "active")
+      .neq("owner_user_id", userId)
+      .limit(500);
+    const sharedRows = (await Promise.all((memberships || []).map(async (membership) => {
+      const { data } = await supabase.from(TABLES.ventures).select("*")
+        .eq("user_id", membership.owner_user_id)
+        .eq("venture_id", membership.venture_id)
+        .maybeSingle();
+      return data;
+    }))).filter(Boolean);
+    const records = [...(owned || []), ...sharedRows]
+      .filter((row, index, rows) => rows.findIndex((candidate) => candidate.id === row.id && candidate.user_id === row.user_id) === index)
+      .sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at));
+    return Response.json({ records });
+  }
+
+  const access = await resolveVentureAccess(supabase, userId, ventureId!);
+  if (!access) return Response.json({ error: "Forbidden" }, { status: 403 });
   const orderColumn = resource === "learnings" ? "date_detected" : "created_at";
-  const { data, error } = await supabase
+  let query = supabase
     .from(TABLES[resource])
     .select("*")
-    .eq("user_id", userId)
-    .eq("venture_id", ventureId)
+    .eq("user_id", access.ownerUserId)
     .order(orderColumn, { ascending: false })
     .limit(resource === "operations" ? 100 : 500);
+  if (ventureId) query = query.eq("venture_id", ventureId);
+  const { data, error } = await query;
 
   if (error) {
     console.error("Persistence read failed", { resource, code: error.code });
@@ -104,15 +175,49 @@ export async function POST(request: Request) {
     );
   }
 
+  let ownerUserId = userId;
+  let access: VentureAccess | null = null;
+  if (body.resource === "ventures") {
+    access = await resolveVentureAccess(supabase, userId, String(record.venture_id));
+    ownerUserId = access?.ownerUserId || userId;
+  } else {
+    access = await resolveVentureAccess(supabase, userId, String(record.venture_id));
+    if (!access) return Response.json({ error: "Forbidden" }, { status: 403 });
+    ownerUserId = access.ownerUserId;
+  }
+  if (access && access.role !== "owner" && !access.canEditBoard) {
+    return Response.json({ error: "Read-only venture access" }, { status: 403 });
+  }
+
   const { data, error } = await supabase
     .from(TABLES[body.resource])
-    .upsert({ ...record, user_id: userId }, { onConflict: "id,user_id" })
+    .upsert({ ...record, user_id: ownerUserId }, { onConflict: "id,user_id" })
     .select("*")
     .single();
 
   if (error) {
     console.error("Persistence write failed", { resource: body.resource, code: error.code });
     return Response.json({ error: "Persistence write failed" }, { status: 500 });
+  }
+  if (body.resource === "ventures" && !access) {
+    const workspace = record.workspace && typeof record.workspace === "object"
+      ? record.workspace as Record<string, unknown>
+      : {};
+    const members = Array.isArray(workspace.members) ? workspace.members as Array<Record<string, unknown>> : [];
+    const owner = members.find((member) => member.role === "owner");
+    await supabase.from("venture_memberships").upsert({
+      owner_user_id: userId,
+      venture_id: record.venture_id,
+      user_id: userId,
+      email: typeof owner?.email === "string" ? owner.email : "",
+      name: typeof owner?.name === "string" ? owner.name : null,
+      role: "owner",
+      status: "active",
+      can_join_standup: true,
+      can_edit_board: true,
+      can_assign_cards: true,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "owner_user_id,venture_id,user_id" });
   }
   return Response.json({ record: data });
 }
@@ -137,11 +242,16 @@ export async function DELETE(request: Request) {
     );
   }
 
+  const access = await resolveVentureAccess(supabase, userId, ventureId);
+  if (!access) return Response.json({ error: "Forbidden" }, { status: 403 });
+  if (access.role !== "owner" && !access.canEditBoard) {
+    return Response.json({ error: "Read-only venture access" }, { status: 403 });
+  }
   const { error } = await supabase
     .from(TABLES[resource])
     .delete()
     .eq("id", id)
-    .eq("user_id", userId)
+    .eq("user_id", access.ownerUserId)
     .eq("venture_id", ventureId);
   if (error) return Response.json({ error: "Persistence delete failed" }, { status: 500 });
   return Response.json({ success: true });

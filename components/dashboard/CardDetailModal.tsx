@@ -17,10 +17,16 @@ import {
   Mic,
   MicOff,
   Radio,
-  Loader2
+  Loader2,
+  Timer,
+  History,
+  CircleDot
 } from "lucide-react";
 import { KanbanCard, CardChecklistItem, Venture, VentureStore } from "@/lib/store/ventureStore";
 import { VoiceEngine } from "@/lib/voice/voiceEngine";
+import { formatInProgressAge, getInProgressAgeDays } from "@/lib/agent/ticketAging";
+import { getTicketActivity } from "@/lib/agent/ticketActivity";
+import { AI_ASSIGNEE_ID, assignableVentureMembers, memberDisplayName, memberInitials } from "@/lib/venture/members";
 
 export interface CardDetailModalProps {
   card: KanbanCard | null;
@@ -124,6 +130,7 @@ export function CardDetailModal({
   const [category, setCategory] = useState<KanbanCard["category"]>(card.category);
   const [priority, setPriority] = useState<KanbanCard["priority"]>(card.priority || "Medium");
   const [owner, setOwner] = useState<string>(card.owner || "YOU");
+  const [assigneeIds, setAssigneeIds] = useState<string[]>(card.assigneeIds || []);
   const [dueDate, setDueDate] = useState<string>(card.dueDate || "");
   const [checklists, setChecklists] = useState<CardChecklistItem[]>(card.checklists || []);
   const [newChecklistText, setNewChecklistText] = useState("");
@@ -140,6 +147,9 @@ export function CardDetailModal({
   const totalItems = checklists.length;
   const completedItems = checklists.filter((i) => i.done).length;
   const checklistPercent = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
+  const inProgressAgeDays = columnKey === "in_progress" ? getInProgressAgeDays(card) : null;
+  const inProgressAgeLabel = formatInProgressAge(inProgressAgeDays);
+  const ticketHistory = getTicketActivity(venture, card.id).slice(0, 8);
 
   const handleSaveAll = (overrideCol?: keyof Venture["columns"]) => {
     const updated: KanbanCard = {
@@ -149,6 +159,7 @@ export function CardDetailModal({
       category,
       priority,
       owner,
+      assigneeIds,
       dueDate,
       checklists,
       linkedAssumptionId: linkedAssumptionId || undefined,
@@ -157,6 +168,23 @@ export function CardDetailModal({
     };
 
     onUpdateCard(updated, overrideCol || targetCol);
+  };
+
+  const saveStructuredContent = (nextDescription: string, nextChecklists: CardChecklistItem[]) => {
+    const completed = nextChecklists.filter((item) => item.done).length;
+    onUpdateCard({
+      ...card,
+      title: title.trim() || card.title,
+      description: nextDescription.trim(),
+      category,
+      priority,
+      owner,
+      assigneeIds,
+      dueDate,
+      checklists: nextChecklists,
+      linkedAssumptionId: linkedAssumptionId || undefined,
+      progress: nextChecklists.length > 0 ? Math.round((completed / nextChecklists.length) * 100) : card.progress,
+    }, targetCol);
   };
 
   const handleToggleChecklist = (id: string) => {
@@ -172,6 +200,7 @@ export function CardDetailModal({
       ...card,
       checklists: updated,
       progress: pct,
+      assigneeIds,
     };
     onUpdateCard(updatedCard, targetCol);
   };
@@ -196,6 +225,7 @@ export function CardDetailModal({
       ...card,
       checklists: updated,
       progress: pct,
+      assigneeIds,
     };
     onUpdateCard(updatedCard, targetCol);
   };
@@ -230,11 +260,13 @@ export function CardDetailModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          mode: "draft_only",
           message: `The founder spoke these instructions for the card "${title}": "${voiceTranscript}". Format a complete user story, extract 3-4 distinct testable acceptance criteria with bullet points starting with "•", and explain the context for ${venture.name}. Do not truncate or cut off.`,
           venture: {
             name: venture.name,
             problemStatement: venture.problemStatement,
             targetCustomer: venture.targetCustomer,
+            columns: venture.columns,
           },
         }),
       });
@@ -260,7 +292,7 @@ export function CardDetailModal({
 
       setDescription(formattedDesc);
       if (newItems.length > 0) {
-        setChecklists((prev) => [...prev, ...newItems]);
+        setChecklists([...checklists, ...newItems]);
       }
 
       setIsEditingDesc(false);
@@ -269,7 +301,7 @@ export function CardDetailModal({
       // Play voice confirmation
       VoiceEngine.speak("I've structured your description and added the acceptance criteria to this card.");
 
-      handleSaveAll();
+      saveStructuredContent(formattedDesc, [...checklists, ...newItems]);
     } catch (e) {
       console.error(e);
     } finally {
@@ -291,6 +323,7 @@ export function CardDetailModal({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          mode: "draft_only",
           message: `Generate a complete User Story and 3-4 specific, testable Acceptance Criteria for this task: "${title}" in the startup "${venture.name}".
 
 Format as:
@@ -307,6 +340,7 @@ Please write out all criteria completely without truncation.`,
             name: venture.name,
             problemStatement: venture.problemStatement,
             targetCustomer: venture.targetCustomer,
+            columns: venture.columns,
           },
         }),
       });
@@ -337,7 +371,7 @@ Please write out all criteria completely without truncation.`,
       }
 
       setIsEditingDesc(false);
-      handleSaveAll();
+      saveStructuredContent(newDesc, [...checklists, ...lines]);
     } catch (e) {
       console.error(e);
     } finally {
@@ -346,7 +380,7 @@ Please write out all criteria completely without truncation.`,
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 z-50 animate-in fade-in duration-150">
+    <div className="fixed inset-y-0 left-0 right-0 lg:right-96 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 z-50 animate-in fade-in duration-150">
       <div className="bg-white rounded-3xl max-w-3xl w-full shadow-2xl border border-slate-200 flex flex-col max-h-[90vh] overflow-hidden">
         {/* Top Header */}
         <div className="p-5 border-b border-slate-100 flex items-start justify-between gap-4 bg-slate-50/50">
@@ -367,6 +401,19 @@ Please write out all criteria completely without truncation.`,
                   {priority} Priority
                 </span>
               )}
+              {inProgressAgeLabel && (
+                <span
+                  className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-md border ${
+                    (inProgressAgeDays || 0) >= 3
+                      ? "bg-rose-50 text-rose-700 border-rose-200"
+                      : "bg-amber-50 text-amber-700 border-amber-200"
+                  }`}
+                  title={card.inProgressSince ? `Tracked since ${new Date(card.inProgressSince).toLocaleString()}` : undefined}
+                >
+                  <Timer className="w-3 h-3" />
+                  In progress {card.inProgressSinceInferred ? "about " : ""}{inProgressAgeLabel.toLowerCase()}
+                </span>
+              )}
             </div>
 
             <input
@@ -378,7 +425,26 @@ Please write out all criteria completely without truncation.`,
             />
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center justify-end gap-2 shrink-0 flex-wrap">
+            <button
+              type="button"
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent("founderally:focus-ticket", {
+                  detail: {
+                    ventureId: venture.id,
+                    ticketId: card.id,
+                    title: card.title,
+                    prompt: `Open ticket ${card.id} (${card.title}) and review its acceptance criteria with me.`,
+                  },
+                }));
+                if (window.innerWidth < 1024) onClose();
+              }}
+              className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm"
+              title="Continue reviewing this ticket with your BA"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-blue-300" />
+              <span>Discuss with BA</span>
+            </button>
             {/* Talk to Fill Button in Header */}
             {!isRecordingVoice && (
               <button
@@ -537,9 +603,16 @@ Please write out all criteria completely without truncation.`,
                         onChange={() => handleToggleChecklist(item.id)}
                         className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300 rounded-md"
                       />
-                      <span className={`truncate ${item.done ? "line-through text-slate-400 font-normal" : "font-semibold text-slate-800"}`}>
-                        {item.text}
-                      </span>
+                      <input
+                        type="text"
+                        value={item.text}
+                        onChange={(event) => setChecklists((current) => current.map((criterion) =>
+                          criterion.id === item.id ? { ...criterion, text: event.target.value } : criterion
+                        ))}
+                        onBlur={() => saveStructuredContent(description, checklists)}
+                        className={`min-w-0 flex-1 bg-transparent outline-none ${item.done ? "line-through text-slate-400 font-normal" : "font-semibold text-slate-800"}`}
+                        aria-label={`Edit acceptance criterion: ${item.text}`}
+                      />
                     </label>
                     <button
                       onClick={() => {
@@ -596,6 +669,49 @@ Please write out all criteria completely without truncation.`,
 
           {/* Right Sidebar (1 col) */}
           <div className="space-y-5 bg-slate-50/50 p-4 rounded-2xl border border-slate-200/80">
+            {/* Multi-assignee ownership */}
+            <div className="space-y-2">
+              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                <User className="w-3.5 h-3.5" /> Assignees
+              </label>
+              <div className="space-y-1.5">
+                {[
+                  { id: AI_ASSIGNEE_ID, label: "AI BA", initials: "AI", status: "active" },
+                  ...assignableVentureMembers(venture).map((member) => ({
+                    id: member.id,
+                    label: memberDisplayName(member),
+                    initials: memberInitials(member),
+                    status: member.status,
+                  })),
+                ].map((assignee) => {
+                  const selected = assigneeIds.includes(assignee.id);
+                  return (
+                    <button
+                      key={assignee.id}
+                      type="button"
+                      onClick={() => {
+                        const next = selected
+                          ? assigneeIds.filter((id) => id !== assignee.id)
+                          : [...assigneeIds, assignee.id];
+                        setAssigneeIds(next);
+                        onUpdateCard({ ...card, assigneeIds: next }, targetCol);
+                      }}
+                      className={`w-full flex items-center gap-2 rounded-xl border px-2.5 py-2 text-left transition-colors ${
+                        selected ? "border-blue-300 bg-blue-50" : "border-slate-200 bg-white hover:bg-slate-50"
+                      }`}
+                    >
+                      <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-[8px] font-black ${assignee.id === AI_ASSIGNEE_ID ? "bg-slate-900 text-blue-300" : "bg-blue-600 text-white"}`}>{assignee.initials}</span>
+                      <span className="min-w-0 flex-1 truncate text-[11px] font-bold text-slate-800">{assignee.label}</span>
+                      {assignee.status === "invited" && <span className="text-[8px] font-black uppercase text-amber-600">Invited</span>}
+                      <span className={`w-4 h-4 rounded-md border flex items-center justify-center ${selected ? "bg-blue-600 border-blue-600 text-white" : "border-slate-300"}`}>
+                        {selected && <Check className="w-2.5 h-2.5" />}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Category / Label */}
             <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
@@ -642,6 +758,23 @@ Please write out all criteria completely without truncation.`,
 
             {/* Move to List */}
             <div className="space-y-1.5">
+              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5" /> Due date
+              </label>
+              <input
+                type="date"
+                value={dueDate}
+                onChange={(event) => {
+                  const nextDueDate = event.target.value;
+                  setDueDate(nextDueDate);
+                  onUpdateCard({ ...card, dueDate: nextDueDate || undefined }, targetCol);
+                }}
+                className="w-full p-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            {/* Move to List */}
+            <div className="space-y-1.5">
               <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
                 Move to List
               </label>
@@ -683,6 +816,43 @@ Please write out all criteria completely without truncation.`,
                   </option>
                 ))}
               </select>
+            </div>
+
+            {/* Ticket Activity Ledger */}
+            <div className="space-y-2.5 pt-3 border-t border-slate-200">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  <History className="w-3.5 h-3.5" />
+                  <span>Ticket history</span>
+                </div>
+                <span className="text-[10px] font-bold text-slate-400">{ticketHistory.length}</span>
+              </div>
+              {ticketHistory.length > 0 ? (
+                <div className="relative space-y-0 before:absolute before:left-[5px] before:top-2 before:bottom-2 before:w-px before:bg-slate-200">
+                  {ticketHistory.map((event) => (
+                    <div key={event.id} className="relative pl-5 py-1.5">
+                      <CircleDot className={`absolute left-0 top-2 w-3 h-3 bg-slate-50 ${
+                        event.actor === "advisor" ? "text-blue-600" : event.type === "moved" ? "text-emerald-600" : "text-slate-400"
+                      }`} />
+                      <p className="text-[10px] font-semibold leading-snug text-slate-700">{event.summary}</p>
+                      <p className="mt-0.5 text-[9px] text-slate-400">
+                        {event.actor === "advisor" ? "BA" : event.actor === "system" ? "System" : "You"}
+                        {" · "}
+                        {new Date(event.occurredAt).toLocaleString([], {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-[10px] leading-relaxed text-slate-400">
+                  New changes will appear here as the board and your BA update this ticket.
+                </p>
+              )}
             </div>
 
             {/* Delete Card */}

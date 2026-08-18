@@ -4,6 +4,10 @@ import { Venture, VentureStore, KanbanCard } from "@/lib/store/ventureStore";
 import { CommitmentStore, FounderCommitment, LearningPattern } from "@/lib/store/commitmentStore";
 import { AIOperationsLogger } from "@/lib/agent/aiOperationsLog";
 import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
+import { mergeTicketCriteria } from "@/lib/agent/ticketCriteria";
+import { formatInProgressAge, getInProgressAgeDays, transitionTicketStatus } from "@/lib/agent/ticketAging";
+import { appendTicketActivity, describeTicketChanges, getTicketActivity, summarizeStandupHistory } from "@/lib/agent/ticketActivity";
+import { formatAssigneesForAdvisor, memberDisplayName } from "@/lib/venture/members";
 
 export interface ToolExecutionResult {
   toolName: string;
@@ -38,6 +42,9 @@ export class BAAgentService {
       return [];
     };
 
+    const makeCriterionId = (index: number) =>
+      `chk-ai-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 5)}`;
+
     try {
       switch (toolName) {
         // 1. get_sprint_context
@@ -49,6 +56,7 @@ export class BAAgentService {
           const blocked = getColItems(currentColumns.blocked);
           const commitments = CommitmentStore.getOutstandingCommitments(venture.id);
           const learnings = CommitmentStore.getLearnings(venture.id);
+          const recentHistory = summarizeStandupHistory(venture);
 
           result = {
             toolName,
@@ -61,11 +69,33 @@ export class BAAgentService {
               stage: venture.stage,
               backlog: backlog.map((c) => ({ id: c.id, title: c.title, priority: c.priority })),
               today: today.map((c) => ({ id: c.id, title: c.title, priority: c.priority })),
-              inProgress: inProgress.map((c) => ({ id: c.id, title: c.title, priority: c.priority })),
+              inProgress: inProgress.map((c) => {
+                const ageDays = getInProgressAgeDays(c);
+                return {
+                  id: c.id,
+                  title: c.title,
+                  priority: c.priority,
+                  inProgressSince: c.inProgressSince,
+                  inProgressDays: ageDays,
+                  inProgressAgeLabel: formatInProgressAge(ageDays),
+                  ageIsApproximate: Boolean(c.inProgressSinceInferred),
+                };
+              }),
               done: done.map((c) => ({ id: c.id, title: c.title })),
               blocked: blocked.map((c) => ({ id: c.id, title: c.title, priority: c.priority })),
               outstandingCommitments: commitments.map((c) => c.commitment),
               learnings: learnings.map((l) => l.pattern),
+              historySince: recentHistory.since,
+              recentTicketActivity: recentHistory.events.slice(-20),
+              completedSinceLastStandup: recentHistory.completed.map((event) => event.ticketTitle),
+              startedSinceLastStandup: recentHistory.started.map((event) => event.ticketTitle),
+              ventureMembers: (venture.members || []).filter((member) => member.status !== "removed").map((member) => ({
+                id: member.id,
+                name: memberDisplayName(member),
+                role: member.role,
+                status: member.status,
+                canJoinStandup: member.canJoinStandup,
+              })),
             },
           };
           break;
@@ -93,6 +123,9 @@ export class BAAgentService {
           }
 
           if (foundCard) {
+            const acceptanceCriteria = foundCard.checklists || [];
+            const completedCriteria = acceptanceCriteria.filter((criterion) => criterion.done).length;
+            const inProgressDays = columnFound === "in_progress" ? getInProgressAgeDays(foundCard) : null;
             result = {
               toolName,
               success: true,
@@ -103,8 +136,30 @@ export class BAAgentService {
                 category: foundCard.category,
                 priority: foundCard.priority,
                 owner: foundCard.owner,
+                assigneeIds: foundCard.assigneeIds || [],
+                assignees: formatAssigneesForAdvisor(venture, foundCard),
                 column: columnFound,
                 description: foundCard.description || "No extended description",
+                acceptanceCriteria: acceptanceCriteria.map((criterion) => ({
+                  id: criterion.id,
+                  text: criterion.text,
+                  done: criterion.done,
+                })),
+                acceptanceCriteriaProgress: {
+                  completed: completedCriteria,
+                  total: acceptanceCriteria.length,
+                  percent: acceptanceCriteria.length > 0
+                    ? Math.round((completedCriteria / acceptanceCriteria.length) * 100)
+                    : 0,
+                },
+                dueDate: foundCard.dueDate || null,
+                linkedAssumptionId: foundCard.linkedAssumptionId || null,
+                inProgressSince: foundCard.inProgressSince || null,
+                inProgressDays,
+                inProgressAgeLabel: formatInProgressAge(inProgressDays),
+                ageIsApproximate: Boolean(foundCard.inProgressSinceInferred),
+                lastInProgressDurationDays: foundCard.lastInProgressDurationDays ?? null,
+                recentActivity: getTicketActivity(venture, foundCard.id).slice(0, 12),
               },
             };
           } else if (matches.length > 1) {
@@ -144,14 +199,24 @@ export class BAAgentService {
             ? targetCol
             : "today";
 
-          const newCard: KanbanCard = {
+          const now = new Date().toISOString();
+          const baseCard: KanbanCard = {
             id: "t-" + Date.now() + Math.random().toString(36).substr(2, 4),
             title: title.trim(),
             description: args.description || args.reason || "",
             category: args.category || "Feature",
             priority: args.priority || "High",
             owner: args.owner || "YOU",
+            assigneeIds: Array.isArray(args.assigneeIds)
+              ? args.assigneeIds
+              : [venture.members?.find((member) => member.role === "owner")?.id || `${venture.id}:owner`],
+            checklists: mergeTicketCriteria([], args.acceptanceCriteria, "replace", [], makeCriterionId),
+            createdAt: now,
+            statusChangedAt: now,
           };
+          const newCard = validCol === "in_progress"
+            ? transitionTicketStatus(baseCard, "today", "in_progress", now)
+            : baseCard;
 
           const existing = getColItems(currentColumns[validCol]);
           currentColumns = {
@@ -162,7 +227,15 @@ export class BAAgentService {
             },
           };
 
-          updatedVenture = { ...venture, columns: currentColumns };
+          updatedVenture = appendTicketActivity({ ...venture, columns: currentColumns }, {
+            ticketId: newCard.id,
+            ticketTitle: newCard.title,
+            type: "created",
+            actor: "advisor",
+            source: "ba_tool",
+            summary: `Created "${newCard.title}" in ${currentColumns[validCol].name}`,
+            toColumn: validCol,
+          });
           VentureStore.updateVenture(updatedVenture);
 
           result = {
@@ -179,44 +252,85 @@ export class BAAgentService {
         case "update_ticket": {
           const ticketId = args.ticketId || args.id;
           const cardTitle = args.cardTitle || args.title;
-          let updated = false;
-
+          const matches: Array<{ card: KanbanCard; column: keyof Venture["columns"] }> = [];
           for (const colKey of Object.keys(currentColumns) as (keyof Venture["columns"])[]) {
-            const items = getColItems(currentColumns[colKey]);
-            const nextItems = items.map((c) => {
-              if (
-                (ticketId && c.id === ticketId) ||
-                (cardTitle && c.title.toLowerCase().includes(cardTitle.toLowerCase()))
-              ) {
-                updated = true;
-                return {
-                  ...c,
-                  title: args.newTitle || c.title,
-                  description: args.description !== undefined ? args.description : c.description,
-                  priority: args.priority || c.priority,
-                  category: args.category || c.category,
-                };
-              }
-              return c;
-            });
-
-            if (updated) {
-              currentColumns = {
-                ...currentColumns,
-                [colKey]: { ...currentColumns[colKey], items: nextItems },
-              };
-              break;
+            for (const candidate of getColItems(currentColumns[colKey])) {
+              const exactId = ticketId && candidate.id === ticketId;
+              const titleMatch = cardTitle && candidate.title.toLowerCase().includes(String(cardTitle).toLowerCase());
+              if (exactId || titleMatch) matches.push({ card: candidate, column: colKey });
             }
           }
 
-          if (updated) {
-            updatedVenture = { ...venture, columns: currentColumns };
+          if (matches.length === 1) {
+            const { card: matchedCard, column } = matches[0];
+            const nextCriteria = mergeTicketCriteria(
+              matchedCard.checklists || [],
+              args.acceptanceCriteria,
+              args.acceptanceCriteriaMode === "replace" ? "replace" : "append",
+              args.checklistUpdates,
+              makeCriterionId,
+            );
+            const completedCriteria = nextCriteria.filter((criterion) => criterion.done).length;
+            const updatedCard: KanbanCard = {
+              ...matchedCard,
+              title: args.newTitle || matchedCard.title,
+              description: args.description !== undefined ? args.description : matchedCard.description,
+              priority: args.priority || matchedCard.priority,
+              category: args.category || matchedCard.category,
+              assigneeIds: Array.isArray(args.assigneeIds) ? args.assigneeIds : matchedCard.assigneeIds,
+              dueDate: args.dueDate !== undefined ? (args.dueDate || undefined) : matchedCard.dueDate,
+              linkedAssumptionId: args.linkedAssumptionId !== undefined
+                ? (args.linkedAssumptionId || undefined)
+                : matchedCard.linkedAssumptionId,
+              checklists: nextCriteria,
+              progress: nextCriteria.length > 0 ? Math.round((completedCriteria / nextCriteria.length) * 100) : matchedCard.progress,
+            };
+            const changes = describeTicketChanges(matchedCard, updatedCard);
+            currentColumns = {
+              ...currentColumns,
+              [column]: {
+                ...currentColumns[column],
+                items: getColItems(currentColumns[column]).map((candidate) =>
+                  candidate.id === matchedCard.id ? updatedCard : candidate
+                ),
+              },
+            };
+            updatedVenture = changes.length > 0
+              ? appendTicketActivity({ ...venture, columns: currentColumns }, {
+                  ticketId: updatedCard.id,
+                  ticketTitle: updatedCard.title,
+                  type: changes.includes("acceptance criteria") ? "criteria_updated" : "updated",
+                  actor: "advisor",
+                  source: "ba_tool",
+                  summary: `Updated ${changes.join(", ")} on "${updatedCard.title}"`,
+                  changes,
+                })
+              : { ...venture, columns: currentColumns };
             VentureStore.updateVenture(updatedVenture);
             result = {
               toolName,
               success: true,
-              message: `Updated ticket "${cardTitle || ticketId}"`,
+              message: changes.length > 0
+                ? `Updated ${changes.join(", ")} on "${updatedCard.title}"`
+                : `No changes were needed on "${updatedCard.title}"`,
+              data: {
+                ticketId: updatedCard.id,
+                title: updatedCard.title,
+                description: updatedCard.description || "",
+                acceptanceCriteria: nextCriteria,
+                assigneeIds: updatedCard.assigneeIds || [],
+                dueDate: updatedCard.dueDate || null,
+                linkedAssumptionId: updatedCard.linkedAssumptionId || null,
+                column,
+              },
               updatedVenture,
+            };
+          } else if (matches.length > 1) {
+            result = {
+              toolName,
+              success: false,
+              message: `Ticket reference "${ticketId || cardTitle}" is ambiguous; use a stable ticket ID.`,
+              data: { matches: matches.map(({ card, column }) => ({ id: card.id, title: card.title, column })) },
             };
           } else {
             result = {
@@ -263,9 +377,10 @@ export class BAAgentService {
             const updatedFrom = getColItems(currentColumns[fromCol]).filter(
               (c) => c.id !== foundCard!.id
             );
+            const transitionedCard = transitionTicketStatus(foundCard, fromCol, toCol);
             const updatedTo = [
               ...getColItems(currentColumns[toCol]),
-              { ...foundCard, completed: toCol === "done" },
+              { ...transitionedCard, completed: toCol === "done" },
             ];
 
             currentColumns = {
@@ -274,7 +389,16 @@ export class BAAgentService {
               [toCol]: { ...currentColumns[toCol], items: updatedTo },
             };
 
-            updatedVenture = { ...venture, columns: currentColumns };
+            updatedVenture = appendTicketActivity({ ...venture, columns: currentColumns }, {
+              ticketId: transitionedCard.id,
+              ticketTitle: transitionedCard.title,
+              type: "moved",
+              actor: "advisor",
+              source: "ba_tool",
+              summary: `Moved "${transitionedCard.title}" from ${currentColumns[fromCol].name} to ${currentColumns[toCol].name}`,
+              fromColumn: fromCol,
+              toColumn: toCol,
+            });
             VentureStore.updateVenture(updatedVenture);
 
             result = {
@@ -286,6 +410,8 @@ export class BAAgentService {
                 cardTitle: foundCard.title,
                 fromColumn: fromCol,
                 toColumn: toCol,
+                inProgressSince: transitionedCard.inProgressSince || null,
+                inProgressDays: toCol === "in_progress" ? getInProgressAgeDays(transitionedCard) : null,
               },
               updatedVenture,
             };
@@ -327,11 +453,22 @@ export class BAAgentService {
             args.relatedTicketId
           );
 
+          updatedVenture = {
+            ...venture,
+            standupSessions: (venture.standupSessions || []).map((session) =>
+              session.status === "active"
+                ? { ...session, commitmentIds: [...new Set([...session.commitmentIds, commitment.id])] }
+                : session
+            ),
+          };
+          VentureStore.updateVenture(updatedVenture);
+
           result = {
             toolName,
             success: true,
             message: `Recorded daily commitment: "${commitment.commitment}"`,
             data: { id: commitment.id, commitment: commitment.commitment, deadline: commitment.deadline },
+            updatedVenture,
           };
           break;
         }

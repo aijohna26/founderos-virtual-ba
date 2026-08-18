@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { Sparkles, Plus, Rocket, X } from "lucide-react";
 import { VentureStore, Venture } from "@/lib/store/ventureStore";
+import { useUser } from "@clerk/nextjs";
 
 export interface CreateVentureModalProps {
   isOpen: boolean;
@@ -15,6 +16,7 @@ export function CreateVentureModal({
   onClose,
   onVentureCreated,
 }: CreateVentureModalProps) {
+  const { user } = useUser();
   const [name, setName] = useState("");
   const [tagline, setTagline] = useState("");
   const [targetCustomer, setTargetCustomer] = useState("");
@@ -22,6 +24,7 @@ export function CreateVentureModal({
   const [solutionSummary, setSolutionSummary] = useState("");
   const [stage, setStage] = useState("Ideation & Problem Discovery");
   const [boardMode, setBoardMode] = useState<"clean" | "ai_starter">("clean");
+  const [collaborationMode, setCollaborationMode] = useState<"solo" | "partner" | "team" | "external">("solo");
   const [loading, setLoading] = useState(false);
 
   if (!isOpen) return null;
@@ -50,7 +53,8 @@ export function CreateVentureModal({
         analysis = await res.json();
       }
 
-      const id = name.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-" + Date.now().toString().slice(-4);
+      const id = name.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-" + crypto.randomUUID();
+      const ownerMemberId = `${id}:owner`;
 
       const newVenture: Venture = {
         id,
@@ -59,6 +63,23 @@ export function CreateVentureModal({
         status: "Validation",
         color: "bg-indigo-600",
         dot: "bg-indigo-500",
+        ownerUserId: user?.id,
+        collaborationMode,
+        members: [{
+          id: ownerMemberId,
+          ventureId: id,
+          userId: user?.id,
+          email: user?.primaryEmailAddress?.emailAddress || "",
+          name: user?.fullName || user?.firstName || "You",
+          role: "owner",
+          status: "active",
+          canJoinStandup: true,
+          canEditBoard: true,
+          canAssignCards: true,
+          joinedAt: new Date().toISOString(),
+        }],
+        invitations: [],
+        standupSessions: [],
         stage: stage || "Discovery & Validation",
         targetCustomer: targetCustomer.trim() || "Target early adopters",
         problemStatement: problemStatement.trim(),
@@ -105,6 +126,7 @@ export function CreateVentureModal({
       const existing = VentureStore.getVentures();
       existing.push(newVenture);
       VentureStore.saveVentures(existing);
+      VentureStore.updateVenture(newVenture);
 
       setLoading(false);
       onVentureCreated(newVenture);
@@ -120,8 +142,30 @@ export function CreateVentureModal({
         solutionSummary: solutionSummary.trim() || tagline.trim(),
         stage,
       });
+      const ownerMemberId = `${created.id}:owner`;
+      const collaborativeCreated: Venture = {
+        ...created,
+        ownerUserId: user?.id,
+        collaborationMode,
+        members: [{
+          id: ownerMemberId,
+          ventureId: created.id,
+          userId: user?.id,
+          email: user?.primaryEmailAddress?.emailAddress || "",
+          name: user?.fullName || user?.firstName || "You",
+          role: "owner",
+          status: "active",
+          canJoinStandup: true,
+          canEditBoard: true,
+          canAssignCards: true,
+          joinedAt: new Date().toISOString(),
+        }],
+        invitations: [],
+        standupSessions: [],
+      };
+      VentureStore.updateVenture(collaborativeCreated);
       setLoading(false);
-      onVentureCreated(created);
+      onVentureCreated(collaborativeCreated);
       onClose();
     }
   };
@@ -224,6 +268,39 @@ export function CreateVentureModal({
           </div>
 
           {/* Initial Board Setup Mode */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
+              Who is working on this?
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                ["solo", "Just me", "One human + the AI BA"],
+                ["partner", "Co-founder / partner", "A shared founding workspace"],
+                ["team", "Small team", "Multiple people own delivery"],
+                ["external", "External collaborator", "Advisors, clients or contractors"],
+              ] as const).map(([value, label, description]) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setCollaborationMode(value)}
+                  className={`rounded-2xl border p-3 text-left transition-all ${
+                    collaborationMode === value
+                      ? "border-slate-900 bg-slate-900 text-white shadow-md"
+                      : "border-slate-200 bg-slate-50 text-slate-800 hover:border-slate-300"
+                  }`}
+                >
+                  <span className="block text-xs font-black">{label}</span>
+                  <span className={`mt-1 block text-[10px] leading-snug ${collaborationMode === value ? "text-slate-300" : "text-slate-500"}`}>{description}</span>
+                </button>
+              ))}
+            </div>
+            {collaborationMode !== "solo" && (
+              <p className="rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-[10px] font-semibold text-blue-800">
+                Create the venture first, then use Members in the header to send secure role-based invitations.
+              </p>
+            )}
+          </div>
+
           <div className="space-y-2">
             <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
               Board Starting State

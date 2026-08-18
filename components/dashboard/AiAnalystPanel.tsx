@@ -28,6 +28,7 @@ import { Venture, VentureStore, ChatMessage } from "@/lib/store/ventureStore";
 import { VoiceEngine, VoiceState } from "@/lib/voice/voiceEngine";
 import { MemoryService, MemoryFact } from "@/lib/db/memoryService";
 import { BAAgentService, type ToolExecutionResult } from "@/lib/agent/baAgentService";
+import { DocumentStore } from "@/lib/store/documentStore";
 import {
   ADVISOR_PERSONAS,
   GEMINI_VOICES,
@@ -35,6 +36,13 @@ import {
   resolveAdvisor,
   type AdvisorPersona,
 } from "@/lib/config/advisorPersonas";
+import {
+  createPendingTicketProposal,
+  isProposalCancellation,
+  isProposalConfirmation,
+  isTicketMutationAction,
+  type PendingTicketProposal,
+} from "@/lib/agent/ticketProposal";
 
 export interface AiAnalystPanelProps {
   isDailyCallActive: boolean;
@@ -70,6 +78,8 @@ export function AiAnalystPanel({
   const [showMemoryModal, setShowMemoryModal] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [showAdvisorPicker, setShowAdvisorPicker] = useState(false);
+  const [focusedTicket, setFocusedTicket] = useState<{ id: string; title: string } | null>(null);
+  const [pendingTicketProposal, setPendingTicketProposal] = useState<PendingTicketProposal | null>(null);
   const [scheduledTime, setScheduledTime] = useState(venture?.standupTime || "09:00 AM");
   const [memories, setMemories] = useState<MemoryFact[]>(() => MemoryService.getMemories(venture.id));
   const chatBottomRef = useRef<HTMLDivElement>(null);
@@ -87,6 +97,12 @@ export function AiAnalystPanel({
       timestamp: "09:00 AM",
     },
   ];
+
+  const focusedTicketRecord = focusedTicket
+    ? (Object.keys(venture.columns) as Array<keyof Venture["columns"]>).flatMap((column) =>
+        (venture.columns[column]?.items || []).map((card) => ({ card, column }))
+      ).find(({ card }) => card.id === focusedTicket.id) || null
+    : null;
 
   const selectAdvisor = (nextAdvisor: AdvisorPersona) => {
     VoiceEngine.stopSpeaking();
@@ -135,6 +151,19 @@ export function AiAnalystPanel({
       };
     }
   }, [venture?.id]);
+
+  useEffect(() => {
+    const handleTicketFocus = (event: Event) => {
+      const detail = (event as CustomEvent<{ ventureId?: string; ticketId?: string; title?: string; prompt?: string }>).detail;
+      if (detail?.ventureId !== venture.id || !detail.ticketId || !detail.title) return;
+      setFocusedTicket({ id: detail.ticketId, title: detail.title });
+      setPendingTicketProposal((current) => current?.ticketId === detail.ticketId ? current : null);
+      if (detail.prompt) setInputVal(detail.prompt);
+      if (window.innerWidth < 1024) onMobileOpen?.();
+    };
+    window.addEventListener("founderally:focus-ticket", handleTicketFocus);
+    return () => window.removeEventListener("founderally:focus-ticket", handleTicketFocus);
+  }, [venture.id, onMobileOpen]);
 
   // Auto-scroll to the top of the latest message
   useEffect(() => {
@@ -252,8 +281,82 @@ export function AiAnalystPanel({
       .padStart(2, "0")}`;
   };
 
+  const executePendingTicketProposal = (confirmationText = "Confirm changes") => {
+    if (!pendingTicketProposal) return;
+    const userConfirmation: ChatMessage = {
+      id: `u-confirm-${Date.now()}`,
+      sender: "user",
+      text: confirmationText,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+    let currentVenture: Venture = { ...venture };
+    const results = pendingTicketProposal.actions.map((action) => {
+      const result = BAAgentService.executeTool(action.type, action, currentVenture, "ad_hoc_decision");
+      if (result.updatedVenture) currentVenture = result.updatedVenture;
+      return result;
+    });
+    const failed = results.find((result) => !result.success);
+    const resultText = failed
+      ? `I couldn't apply the proposed ticket changes: ${failed.message}`
+      : `Done. I updated “${pendingTicketProposal.ticketTitle}”: ${pendingTicketProposal.changes.join("; ")}. What should we refine next?`;
+    const aiResult: ChatMessage = {
+      id: `ai-confirm-${Date.now()}`,
+      sender: "ai",
+      text: resultText,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+    const finalVenture: Venture = {
+      ...currentVenture,
+      chatHistory: [...messages, userConfirmation, aiResult],
+    };
+    VentureStore.updateVenture(finalVenture);
+    onUpdateVenture(finalVenture);
+    setPendingTicketProposal(null);
+    if (voiceAudioEnabled) {
+      VoiceEngine.speak(
+        resultText,
+        advisor.voiceName,
+        () => setIsSpeakingAI(true),
+        () => setIsSpeakingAI(false),
+      );
+    }
+  };
+
+  const cancelPendingTicketProposal = (cancellationText = "Cancel changes") => {
+    if (!pendingTicketProposal) return;
+    const userCancellation: ChatMessage = {
+      id: `u-cancel-${Date.now()}`,
+      sender: "user",
+      text: cancellationText,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+    const aiCancellation: ChatMessage = {
+      id: `ai-cancel-${Date.now()}`,
+      sender: "ai",
+      text: `Cancelled. I left “${pendingTicketProposal.ticketTitle}” unchanged.`,
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+    const updatedVenture: Venture = {
+      ...venture,
+      chatHistory: [...messages, userCancellation, aiCancellation],
+    };
+    VentureStore.updateVenture(updatedVenture);
+    onUpdateVenture(updatedVenture);
+    setPendingTicketProposal(null);
+  };
+
   const submitMessage = async (userText: string) => {
     if (!userText.trim() || isTyping) return;
+    if (pendingTicketProposal && isProposalConfirmation(userText)) {
+      setInputVal("");
+      executePendingTicketProposal(userText);
+      return;
+    }
+    if (pendingTicketProposal && isProposalCancellation(userText)) {
+      setInputVal("");
+      cancelPendingTicketProposal(userText);
+      return;
+    }
     if (silenceTimerRef.current) {
       clearTimeout(silenceTimerRef.current);
       silenceTimerRef.current = null;
@@ -283,6 +386,7 @@ export function AiAnalystPanel({
 
     try {
       const activeMemories = MemoryService.getMemories(venture.id);
+      const activeDocuments = DocumentStore.getDocuments(venture.id);
 
       const res = await fetch("/api/ai-analyst", {
         method: "POST",
@@ -298,9 +402,21 @@ export function AiAnalystPanel({
             assumptions: venture.assumptions,
             columns: venture.columns,
             priorities: venture.priorities,
+            ticketActivity: venture.ticketActivity,
+            boardSnapshots: venture.boardSnapshots,
+            lastStandupAt: venture.lastStandupAt,
+            standupComparisonSince: venture.standupComparisonSince,
+            members: venture.members,
+            standupSessions: venture.standupSessions,
           },
           memories: activeMemories,
+          documents: activeDocuments,
           history: updatedHistory.slice(-6),
+          focusedTicket: focusedTicketRecord ? {
+            id: focusedTicketRecord.card.id,
+            title: focusedTicketRecord.card.title,
+            column: focusedTicketRecord.column,
+          } : null,
         }),
         signal: requestController.signal,
       });
@@ -313,9 +429,23 @@ export function AiAnalystPanel({
 
       let currentVenture: Venture = { ...venture };
       const toolResults: ToolExecutionResult[] = [];
+      const rawActions = Array.isArray(data.actions) ? data.actions : [];
+      const proposedTicketActions = focusedTicketRecord
+        ? rawActions.filter(isTicketMutationAction)
+        : [];
+      const immediateActions = proposedTicketActions.length > 0
+        ? rawActions.filter((action: unknown) => !isTicketMutationAction(action))
+        : rawActions;
+      const proposal = focusedTicketRecord && proposedTicketActions.length > 0
+        ? createPendingTicketProposal(
+            proposedTicketActions,
+            { id: focusedTicketRecord.card.id, title: focusedTicketRecord.card.title },
+            venture,
+          )
+        : null;
 
-      if (Array.isArray(data.actions) && data.actions.length > 0) {
-        for (const action of data.actions) {
+      if (immediateActions.length > 0) {
+        for (const action of immediateActions) {
           const toolName = action.type;
           const execRes = BAAgentService.executeTool(toolName, action, currentVenture, "daily_standup");
           toolResults.push(execRes);
@@ -326,8 +456,13 @@ export function AiAnalystPanel({
       }
 
       const failedTool = toolResults.find((result) => !result.success);
-      const confirmedReplyText = failedTool
+      const successfulTool = [...toolResults].reverse().find((result) => result.success);
+      const confirmedReplyText = proposal
+        ? `I’ve prepared ${proposal.changes.length || proposal.actions.length} proposed ${proposal.changes.length === 1 ? "change" : "changes"} for “${proposal.ticketTitle}”. Review them below and confirm before I update the board.`
+        : failedTool
         ? `I couldn't complete that action: ${failedTool.message}`
+        : successfulTool
+        ? `Done — ${successfulTool.message}. What would you like to refine next?`
         : aiReplyText;
 
       const aiMsg: ChatMessage = {
@@ -344,6 +479,7 @@ export function AiAnalystPanel({
 
       VentureStore.updateVenture(finalVenture);
       onUpdateVenture(finalVenture);
+      if (proposal) setPendingTicketProposal(proposal);
 
       // Auto-extract memory fact if significant
       if (
@@ -458,6 +594,7 @@ export function AiAnalystPanel({
     setInputVal("");
     setIsTyping(false);
     setIsSpeakingAI(false);
+    setPendingTicketProposal(null);
 
     const updatedVenture: Venture = { ...venture, chatHistory: [] };
     VentureStore.updateVenture(updatedVenture);
@@ -583,7 +720,83 @@ export function AiAnalystPanel({
 
       {activeWorkspace === "Board" && (
         <div className="mx-3 mt-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-[10px] font-semibold leading-relaxed text-blue-800">
-          Board context is live. Ask {advisor.name} to create a ticket, move work, or record your commitment.
+          <div>Viewing and acting on the {venture.name} board</div>
+          <div className="mt-1 font-normal text-blue-700">Every confirmed tool action updates the board beside this chat.</div>
+          {focusedTicket && (
+            <div className="mt-2 rounded-xl border border-blue-300 bg-white/80 px-2.5 py-2 shadow-sm">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate font-black text-slate-900">Focused: {focusedTicket.title}</p>
+                  {focusedTicketRecord && (
+                    <p className="mt-0.5 text-[9px] font-semibold uppercase tracking-wide text-blue-600">
+                      {focusedTicketRecord.column.replaceAll("_", " ")} · {focusedTicketRecord.card.priority || "Medium"} · {focusedTicketRecord.card.category}
+                    </p>
+                  )}
+                </div>
+                <button type="button" onClick={() => {
+                  setFocusedTicket(null);
+                  setPendingTicketProposal(null);
+                }} className="text-blue-500 hover:text-blue-800" aria-label="Clear focused ticket">×</button>
+              </div>
+              <p className="mt-1.5 text-[9px] font-normal leading-relaxed text-slate-600">
+                I can read its complete description, criteria, assignments, dates, assumption link and activity before proposing changes.
+              </p>
+            </div>
+          )}
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {[
+              ...(focusedTicket ? [`Review the acceptance criteria for ticket ${focusedTicket.id}. `] : []),
+              "Create a ticket for ",
+              "Move a ticket to ",
+              "My commitment today is ",
+            ].map((prompt) => (
+              <button
+                key={prompt}
+                type="button"
+                onClick={() => setInputVal(prompt)}
+                className="rounded-md border border-blue-200 bg-white px-2 py-1 text-[9px] font-bold text-blue-700 hover:border-blue-400"
+              >
+                {prompt.trim()}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {pendingTicketProposal && (
+        <div className="mx-3 mt-2 overflow-hidden rounded-2xl border border-amber-300 bg-amber-50 shadow-sm">
+          <div className="border-b border-amber-200 bg-amber-100/70 px-3 py-2">
+            <p className="text-[9px] font-black uppercase tracking-[0.16em] text-amber-700">Awaiting your confirmation</p>
+            <p className="mt-0.5 truncate text-[11px] font-black text-slate-900">{pendingTicketProposal.ticketTitle}</p>
+          </div>
+          <div className="space-y-1.5 px-3 py-2.5">
+            {(pendingTicketProposal.changes.length > 0
+              ? pendingTicketProposal.changes
+              : ["Apply the discussed ticket update"]
+            ).map((change) => (
+              <div key={change} className="flex items-start gap-1.5 text-[10px] font-semibold leading-snug text-slate-700">
+                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
+                <span>{change}</span>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2 border-t border-amber-200 bg-white/70 p-2.5">
+            <button
+              type="button"
+              onClick={() => cancelPendingTicketProposal()}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-[10px] font-black text-slate-600 transition-colors hover:bg-slate-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => executePendingTicketProposal()}
+              className="inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-950 px-3 py-2 text-[10px] font-black text-white shadow-sm transition-colors hover:bg-slate-800"
+            >
+              <Check className="h-3 w-3 text-emerald-400" />
+              Confirm changes
+            </button>
+          </div>
         </div>
       )}
 
@@ -1124,7 +1337,9 @@ export function AiAnalystPanel({
   return (
     <>
       {/* Desktop Persistent Panel */}
-      <aside className="hidden lg:flex w-72 lg:w-80 bg-white border-l border-slate-200/90 flex-col justify-between h-screen sticky top-0 z-30 select-none shrink-0 shadow-xs transition-all duration-200">
+      <aside className={`hidden lg:flex bg-white border-l flex-col justify-between h-screen sticky top-0 z-30 select-none shrink-0 shadow-xs transition-all duration-200 ${
+        activeWorkspace === "Board" ? "w-96 border-blue-200" : "w-72 lg:w-80 border-slate-200/90"
+      }`}>
         {panelContent}
       </aside>
 

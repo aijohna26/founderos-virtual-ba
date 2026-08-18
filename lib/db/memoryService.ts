@@ -1,6 +1,7 @@
 "use client";
 
 import { PersistenceClient } from "@/lib/store/persistenceClient";
+import { shouldApplyHydration } from "@/lib/store/hydrationGuard";
 
 export interface MemoryFact {
   id: string;
@@ -15,7 +16,14 @@ export interface MemoryFact {
 const MEMORY_STORAGE_KEY = "founderally_venture_memory_v1";
 
 export class MemoryService {
+  private static mutationVersions = new Map<string, number>();
+
+  private static bump(ventureId: string): void {
+    this.mutationVersions.set(ventureId, (this.mutationVersions.get(ventureId) || 0) + 1);
+  }
+
   static async hydrate(ventureId: string): Promise<boolean> {
+    const versionAtStart = this.mutationVersions.get(ventureId) || 0;
     const cached = this.getMemories(ventureId);
     const rows = await PersistenceClient.list("memories", ventureId);
     if (!rows) return false;
@@ -31,6 +39,7 @@ export class MemoryService {
       })));
       return true;
     }
+    if (!shouldApplyHydration(versionAtStart, this.mutationVersions.get(ventureId) || 0)) return false;
     const memories: MemoryFact[] = rows.map((row) => ({
       id: String(row.id),
       ventureId: String(row.venture_id),
@@ -76,6 +85,7 @@ export class MemoryService {
     category: MemoryFact["category"] = "Customer",
     source: MemoryFact["source"] = "founder"
   ): MemoryFact {
+    this.bump(ventureId);
     const existing = this.getMemories(ventureId);
     const newMemory: MemoryFact = {
       id: "mem-" + Date.now(),
@@ -104,6 +114,7 @@ export class MemoryService {
   }
 
   static deleteMemory(ventureId: string, memoryId: string): void {
+    this.bump(ventureId);
     const existing = this.getMemories(ventureId);
     const updated = existing.filter((m) => m.id !== memoryId);
     this.saveMemories(ventureId, updated);

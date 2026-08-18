@@ -13,6 +13,8 @@ import {
   RotateCcw
 } from "lucide-react";
 import { Venture, VentureStore, SprintRecord, KanbanCard } from "@/lib/store/ventureStore";
+import { transitionTicketStatus } from "@/lib/agent/ticketAging";
+import { appendTicketActivities, type TicketActivityInput } from "@/lib/agent/ticketActivity";
 
 export interface CompleteSprintModalProps {
   isOpen: boolean;
@@ -66,6 +68,7 @@ export function CompleteSprintModal({
     const updatedHistory = [newRecord, ...existingHistory];
 
     let updatedColumns = { ...venture.columns };
+    const activityEvents: TicketActivityInput[] = [];
 
     if (carryOverDestination === "next_sprint") {
       // Keep today / in_progress in place for Sprint N+1, clear Done
@@ -75,12 +78,31 @@ export function CompleteSprintModal({
       };
     } else {
       // Move in_progress & today back to backlog, clear Done
+      const returnedInProgress = inProgressCards.map((card) => transitionTicketStatus(card, "in_progress", "backlog"));
       const returnedToBacklog = [
         ...backlogCards,
         ...todayCards,
-        ...inProgressCards,
+        ...returnedInProgress,
         ...blockedCards,
       ];
+      for (const [cards, fromColumn] of [
+        [todayCards, "today"],
+        [returnedInProgress, "in_progress"],
+        [blockedCards, "blocked"],
+      ] as Array<[KanbanCard[], keyof Venture["columns"]]>) {
+        for (const card of cards) {
+          activityEvents.push({
+            ticketId: card.id,
+            ticketTitle: card.title,
+            type: "moved",
+            actor: "system",
+            source: "sprint",
+            summary: `Returned "${card.title}" to Backlog when Sprint ${currentSprintNum} closed`,
+            fromColumn,
+            toColumn: "backlog",
+          });
+        }
+      }
       updatedColumns = {
         backlog: { ...updatedColumns.backlog, items: returnedToBacklog },
         today: { ...updatedColumns.today, items: [] },
@@ -90,13 +112,14 @@ export function CompleteSprintModal({
       };
     }
 
-    const updatedVenture: Venture = {
+    let updatedVenture: Venture = {
       ...venture,
       currentSprint: nextSprintNum,
       sprintStartDate: new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" }),
       sprintHistory: updatedHistory,
       columns: updatedColumns,
     };
+    updatedVenture = appendTicketActivities(updatedVenture, activityEvents);
 
     VentureStore.updateVenture(updatedVenture);
     onUpdateVenture(updatedVenture);

@@ -1,3 +1,10 @@
+"use client";
+
+import { PersistenceClient } from "./persistenceClient";
+import { shouldApplyHydration } from "./hydrationGuard";
+import { transitionTicketStatus } from "../agent/ticketAging";
+import { appendTicketActivity } from "../agent/ticketActivity";
+
 export interface CardChecklistItem {
   id: string;
   text: string;
@@ -10,12 +17,99 @@ export interface KanbanCard {
   description?: string;
   category: "Feature" | "Growth" | "Experiment" | "Research" | "Technical" | "Design" | "Legal";
   owner?: string;
+  /** Human venture-member IDs or the reserved "ai" advisor assignee. */
+  assigneeIds?: string[];
   priority?: "High" | "Medium" | "Low";
   progress?: number;
   completed?: boolean;
   dueDate?: string;
   checklists?: CardChecklistItem[];
   linkedAssumptionId?: string;
+  createdAt?: string;
+  statusChangedAt?: string;
+  /** Start of the ticket's current uninterrupted stay in In Progress. */
+  inProgressSince?: string;
+  /** True only for legacy cards whose start was inferred during migration. */
+  inProgressSinceInferred?: boolean;
+  /** Most recently completed stay in In Progress, retained for ticket history. */
+  lastInProgressDurationDays?: number;
+}
+
+export type VentureMemberRole = "owner" | "cofounder" | "member" | "advisor" | "external";
+export type VentureMemberStatus = "invited" | "active" | "removed";
+
+export interface VentureMember {
+  id: string;
+  ventureId: string;
+  userId?: string;
+  email: string;
+  name?: string;
+  role: VentureMemberRole;
+  status: VentureMemberStatus;
+  canJoinStandup: boolean;
+  canEditBoard: boolean;
+  canAssignCards: boolean;
+  invitedAt?: string;
+  joinedAt?: string;
+}
+
+export interface VentureInvitation {
+  id: string;
+  ventureId: string;
+  email: string;
+  name?: string;
+  role: VentureMemberRole;
+  status: "pending" | "accepted" | "revoked" | "expired" | "failed";
+  canJoinStandup: boolean;
+  canEditBoard: boolean;
+  canAssignCards: boolean;
+  invitedAt: string;
+  expiresAt: string;
+  invitedByUserId?: string;
+}
+
+export interface StandupSession {
+  id: string;
+  ventureId: string;
+  startedAt: string;
+  endedAt?: string;
+  status: "active" | "completed";
+  participantIds: string[];
+  activityEventIds: string[];
+  decisions: Array<{ id: string; text: string; recordedAt: string }>;
+  commitmentIds: string[];
+}
+
+export type TicketActivityType = "created" | "moved" | "updated" | "criteria_updated" | "deleted";
+export type TicketActivityActor = "founder" | "advisor" | "system";
+export type TicketActivitySource = "board" | "ticket_modal" | "ba_tool" | "sprint";
+
+export interface TicketActivityEvent {
+  id: string;
+  ticketId: string;
+  ticketTitle: string;
+  type: TicketActivityType;
+  actor: TicketActivityActor;
+  source: TicketActivitySource;
+  occurredAt: string;
+  summary: string;
+  fromColumn?: keyof Venture["columns"];
+  toColumn?: keyof Venture["columns"];
+  changes?: string[];
+}
+
+export interface VentureBoardSnapshot {
+  id: string;
+  capturedAt: string;
+  ticketStates: Array<{
+    ticketId: string;
+    title: string;
+    column: keyof Venture["columns"];
+    priority?: KanbanCard["priority"];
+    assigneeIds?: string[];
+    acceptanceCriteriaCompleted: number;
+    acceptanceCriteriaTotal: number;
+  }>;
 }
 
 export interface Assumption {
@@ -93,9 +187,20 @@ export interface Venture {
   advisorId?: string;
   /** Optional project-specific Gemini voice override. */
   advisorVoiceName?: string;
+  ownerUserId?: string;
+  collaborationMode?: "solo" | "partner" | "team" | "external";
+  members?: VentureMember[];
+  invitations?: VentureInvitation[];
+  standupSessions?: StandupSession[];
   currentSprint?: number;
   sprintStartDate?: string;
   sprintHistory?: SprintRecord[];
+  /** Append-only venture-scoped ticket audit trail used by stand-up intelligence. */
+  ticketActivity?: TicketActivityEvent[];
+  /** Board baselines captured when a stand-up begins. */
+  boardSnapshots?: VentureBoardSnapshot[];
+  lastStandupAt?: string;
+  standupComparisonSince?: string;
   columns: {
     backlog: { name: string; items: KanbanCard[] };
     today: { name: string; items: KanbanCard[] };
@@ -251,53 +356,144 @@ const DEFAULT_VENTURES: Venture[] = [
   }
 ];
 
-function normalizeColumn(col: any, defaultName: string): { name: string; items: KanbanCard[] } {
+function normalizeColumn(
+  col: any,
+  defaultName: string,
+  columnKey: keyof Venture["columns"],
+  fallbackStartedAt?: string,
+  defaultAssigneeId?: string,
+): { name: string; items: KanbanCard[] } {
   if (!col) return { name: defaultName, items: [] };
-  if (Array.isArray(col)) {
-    return { name: defaultName, items: col };
-  }
+  const rawItems = Array.isArray(col) ? col : Array.isArray(col.items) ? col.items : [];
+  const items = rawItems.map((card: KanbanCard) => {
+    const createdAt = card.createdAt || fallbackStartedAt;
+    const assigneeIds = Array.isArray(card.assigneeIds) && card.assigneeIds.length > 0
+      ? card.assigneeIds
+      : card.owner === "AI"
+        ? ["ai"]
+        : defaultAssigneeId
+          ? [defaultAssigneeId]
+          : [];
+    if (columnKey === "in_progress" && !card.inProgressSince) {
+      return {
+        ...card,
+        assigneeIds,
+        createdAt,
+        statusChangedAt: card.statusChangedAt || fallbackStartedAt,
+        inProgressSince: card.statusChangedAt || fallbackStartedAt,
+        inProgressSinceInferred: true,
+      };
+    }
+    return { ...card, createdAt, assigneeIds };
+  });
   return {
-    name: col.name || defaultName,
-    items: Array.isArray(col.items) ? col.items : [],
+    name: (!Array.isArray(col) && col.name) || defaultName,
+    items,
   };
 }
 
 function normalizeVenture(v: any): Venture {
   if (!v) return DEFAULT_VENTURES[0];
   const defaultStandup = v.id === "founderally" ? "09:00 AM" : v.id?.toLowerCase().includes("property") ? "11:00 AM" : "10:00 AM";
+  const fallbackStartedAt = v.sprintStartDate || v.createdAt || new Date().toISOString();
+  const ownerMemberId = `${v.id || "venture"}:owner`;
+  const members: VentureMember[] = Array.isArray(v.members) && v.members.length > 0
+    ? v.members
+    : [{
+        id: ownerMemberId,
+        ventureId: v.id || "founderally",
+        userId: v.ownerUserId,
+        email: "",
+        name: "You",
+        role: "owner",
+        status: "active",
+        canJoinStandup: true,
+        canEditBoard: true,
+        canAssignCards: true,
+        joinedAt: v.createdAt || fallbackStartedAt,
+      }];
+  const defaultAssigneeId = members.find((member) => member.role === "owner")?.id || ownerMemberId;
   return {
     ...DEFAULT_VENTURES[0],
     ...v,
     standupTime: v.standupTime || defaultStandup,
     columns: {
-      backlog: normalizeColumn(v.columns?.backlog, "BACKLOG"),
-      today: normalizeColumn(v.columns?.today, "TODAY"),
-      in_progress: normalizeColumn(v.columns?.in_progress, "IN PROGRESS"),
-      done: normalizeColumn(v.columns?.done, "DONE"),
-      blocked: normalizeColumn(v.columns?.blocked, "BLOCKED"),
+      backlog: normalizeColumn(v.columns?.backlog, "BACKLOG", "backlog", fallbackStartedAt, defaultAssigneeId),
+      today: normalizeColumn(v.columns?.today, "TODAY", "today", fallbackStartedAt, defaultAssigneeId),
+      in_progress: normalizeColumn(v.columns?.in_progress, "IN PROGRESS", "in_progress", fallbackStartedAt, defaultAssigneeId),
+      done: normalizeColumn(v.columns?.done, "DONE", "done", fallbackStartedAt, defaultAssigneeId),
+      blocked: normalizeColumn(v.columns?.blocked, "BLOCKED", "blocked", fallbackStartedAt, defaultAssigneeId),
     },
     assumptions: Array.isArray(v.assumptions) ? v.assumptions : DEFAULT_VENTURES[0].assumptions,
     priorities: Array.isArray(v.priorities) ? v.priorities : DEFAULT_VENTURES[0].priorities,
     milestones: Array.isArray(v.milestones) ? v.milestones : DEFAULT_VENTURES[0].milestones,
     chatHistory: Array.isArray(v.chatHistory) ? v.chatHistory : DEFAULT_VENTURES[0].chatHistory,
+    ticketActivity: Array.isArray(v.ticketActivity) ? v.ticketActivity : [],
+    boardSnapshots: Array.isArray(v.boardSnapshots) ? v.boardSnapshots : [],
+    members,
+    invitations: Array.isArray(v.invitations) ? v.invitations : [],
+    standupSessions: Array.isArray(v.standupSessions) ? v.standupSessions : [],
     strategy: v.strategy || DEFAULT_VENTURES[0].strategy,
   };
 }
 
 export class VentureStore {
+  private static mutationVersion = 0;
+
+  private static cacheKey(): string {
+    return PersistenceClient.cacheKey(STORAGE_KEY);
+  }
+
+  private static persistVenture(venture: Venture): void {
+    this.mutationVersion += 1;
+    void PersistenceClient.upsert("ventures", {
+      id: venture.id,
+      venture_id: venture.id,
+      workspace: venture,
+      created_at: venture.createdAt,
+      updated_at: new Date().toISOString(),
+    });
+  }
+
+  static async hydrate(): Promise<Venture[]> {
+    const cached = this.getVentures();
+    const versionAtStart = this.mutationVersion;
+    const rows = await PersistenceClient.list("ventures");
+    if (!rows) return cached;
+    if (rows.length === 0) {
+      await Promise.all(cached.map((venture) => PersistenceClient.upsert("ventures", {
+        id: venture.id,
+        venture_id: venture.id,
+        workspace: venture,
+        created_at: venture.createdAt,
+        updated_at: new Date().toISOString(),
+      })));
+      return cached;
+    }
+    // A local board/chat mutation that happened while hydration was in flight wins.
+    if (!shouldApplyHydration(versionAtStart, this.mutationVersion)) return this.getVentures();
+    const remote = rows
+      .map((row) => normalizeVenture(row.workspace))
+      .filter((venture) => Boolean(venture?.id));
+    if (remote.length > 0) this.saveVentures(remote);
+    return remote.length > 0 ? remote : cached;
+  }
+
   static getVentures(): Venture[] {
     if (typeof window === "undefined") return DEFAULT_VENTURES;
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const cacheKey = this.cacheKey();
+      const raw = localStorage.getItem(cacheKey);
       if (!raw) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(DEFAULT_VENTURES));
-        return DEFAULT_VENTURES;
+        const normalizedDefaults = DEFAULT_VENTURES.map(normalizeVenture);
+        localStorage.setItem(cacheKey, JSON.stringify(normalizedDefaults));
+        return normalizedDefaults;
       }
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
         const normalized = parsed.map(normalizeVenture);
         // Persist normalized shape
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
+        localStorage.setItem(cacheKey, JSON.stringify(normalized));
         return normalized;
       }
       return DEFAULT_VENTURES;
@@ -309,7 +505,7 @@ export class VentureStore {
   static saveVentures(ventures: Venture[]): void {
     if (typeof window === "undefined") return;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(ventures));
+      localStorage.setItem(this.cacheKey(), JSON.stringify(ventures));
     } catch (e) {
       console.error("Failed to save ventures to localStorage:", e);
     }
@@ -329,7 +525,7 @@ export class VentureStore {
     stage?: string;
   }): Venture {
     const ventures = this.getVentures();
-    const id = data.name.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-" + Date.now().toString().slice(-4);
+    const id = data.name.toLowerCase().replace(/[^a-z0-9]/g, "-") + "-" + crypto.randomUUID();
 
     const newVenture: Venture = {
       id,
@@ -443,6 +639,7 @@ export class VentureStore {
 
     ventures.push(newVenture);
     this.saveVentures(ventures);
+    this.persistVenture(newVenture);
     return newVenture;
   }
 
@@ -452,6 +649,7 @@ export class VentureStore {
     if (idx !== -1) {
       ventures[idx] = venture;
       this.saveVentures(ventures);
+      this.persistVenture(venture);
     }
   }
 
@@ -489,13 +687,27 @@ export class VentureStore {
 
   static addKanbanCard(ventureId: string, columnKey: keyof Venture["columns"], card: Omit<KanbanCard, "id">): KanbanCard {
     const venture = this.getVenture(ventureId);
-    const newCard: KanbanCard = {
+    const now = new Date().toISOString();
+    const baseCard: KanbanCard = {
       ...card,
       id: "card-" + Date.now(),
+      createdAt: card.createdAt || now,
+      statusChangedAt: card.statusChangedAt || now,
     };
+    const newCard = columnKey === "in_progress"
+      ? transitionTicketStatus(baseCard, "today", "in_progress", now)
+      : baseCard;
     if (venture && venture.columns[columnKey]) {
       venture.columns[columnKey].items.push(newCard);
-      this.updateVenture(venture);
+      this.updateVenture(appendTicketActivity(venture, {
+        ticketId: newCard.id,
+        ticketTitle: newCard.title,
+        type: "created",
+        actor: "founder",
+        source: "board",
+        summary: `Created "${newCard.title}" in ${venture.columns[columnKey].name}`,
+        toColumn: columnKey,
+      }));
     }
     return newCard;
   }

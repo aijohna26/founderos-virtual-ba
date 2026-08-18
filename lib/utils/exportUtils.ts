@@ -1,4 +1,5 @@
 import { Venture, KanbanCard } from "@/lib/store/ventureStore";
+import { formatAssigneesForAdvisor } from "@/lib/venture/members";
 
 /**
  * Downloads text/binary content as a file in the user's browser.
@@ -25,7 +26,7 @@ export function exportBoardToCSV(venture: Venture) {
     "Title",
     "Category",
     "Priority",
-    "Owner",
+    "Assignees",
     "Checklists Done",
     "Checklists Total",
     "Progress (%)",
@@ -54,7 +55,7 @@ export function exportBoardToCSV(venture: Venture) {
         card.title,
         card.category || "Feature",
         card.priority || "Medium",
-        card.owner || "YOU",
+        formatAssigneesForAdvisor(venture, card),
         String(doneChecks),
         String(totalChecks),
         `${progress}%`,

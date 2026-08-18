@@ -1,6 +1,7 @@
 "use client";
 
 import { PersistenceClient } from "@/lib/store/persistenceClient";
+import { shouldApplyHydration } from "@/lib/store/hydrationGuard";
 
 export interface AIOperationEntry {
   id: string;
@@ -19,7 +20,10 @@ export interface AIOperationEntry {
 const OPS_LOG_KEY = "founderally_ai_ops_log_v1";
 
 export class AIOperationsLogger {
+  private static mutationVersions = new Map<string, number>();
+
   static async hydrate(ventureId: string): Promise<boolean> {
+    const versionAtStart = this.mutationVersions.get(ventureId) || 0;
     const cached = this.getLogs(ventureId);
     const rows = await PersistenceClient.list("operations", ventureId);
     if (!rows || typeof window === "undefined") return false;
@@ -39,6 +43,7 @@ export class AIOperationsLogger {
       })));
       return true;
     }
+    if (!shouldApplyHydration(versionAtStart, this.mutationVersions.get(ventureId) || 0)) return false;
     const remote: AIOperationEntry[] = rows.map((row) => ({
       id: String(row.id),
       timestamp: String(row.created_at),
@@ -73,6 +78,7 @@ export class AIOperationsLogger {
   }
 
   static logOperation(entry: Omit<AIOperationEntry, "id" | "timestamp">): AIOperationEntry {
+    this.mutationVersions.set(entry.ventureId, (this.mutationVersions.get(entry.ventureId) || 0) + 1);
     const newEntry: AIOperationEntry = {
       id: "op-" + Date.now() + Math.random().toString(36).substr(2, 4),
       timestamp: new Date().toISOString(),

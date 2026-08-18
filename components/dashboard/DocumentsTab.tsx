@@ -1,43 +1,31 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { FolderClosed, FileText, Download, Sparkles, Check, Plus, BookOpen, Search } from "lucide-react";
-import { Venture, VentureStore } from "@/lib/store/ventureStore";
+import { Venture } from "@/lib/store/ventureStore";
+import { DocumentStore, type KnowledgeDocument, type KnowledgeDocumentCategory } from "@/lib/store/documentStore";
 
 export interface DocumentsTabProps {
   venture: Venture;
-}
-
-export interface CustomDoc {
-  id: string;
-  title: string;
-  category: "Customer Interview" | "PRD" | "Market Research" | "Meeting Notes" | "Specification";
-  content: string;
-  date: string;
 }
 
 export function DocumentsTab({ venture }: DocumentsTabProps) {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newTitle, setNewTitle] = useState("");
-  const [newCategory, setNewCategory] = useState<CustomDoc["category"]>("Customer Interview");
+  const [newCategory, setNewCategory] = useState<KnowledgeDocumentCategory>("Customer Interview");
   const [newContent, setNewContent] = useState("");
-  const [customDocs, setCustomDocs] = useState<CustomDoc[]>([
-    {
-      id: "cd-1",
-      title: "3 Founder Onboarding Interviews",
-      category: "Customer Interview",
-      content: "Founder 1: Onboarding took too many steps. Founder 2: Abandoned at workspace config. Founder 3: Loved the voice standup.",
-      date: "August 2026",
-    },
-    {
-      id: "cd-2",
-      title: "Pricing & Willingness-to-Pay Research",
-      category: "Market Research",
-      content: "Solo founders prefer a $100 unlimited first-month trial or flat-rate pilot before committing to an annual subscription.",
-      date: "August 2026",
-    },
-  ]);
+  const [customDocs, setCustomDocs] = useState<KnowledgeDocument[]>(() => DocumentStore.getDocuments(venture.id));
+
+  useEffect(() => {
+    let active = true;
+    void DocumentStore.hydrate(venture.id).then((documents) => {
+      if (active) setCustomDocs(documents);
+    });
+    return () => {
+      active = false;
+    };
+  }, [venture.id]);
 
   const defaultDocs = [
     {
@@ -67,15 +55,8 @@ export function DocumentsTab({ venture }: DocumentsTabProps) {
     e.preventDefault();
     if (!newTitle.trim() || !newContent.trim()) return;
 
-    const newDoc: CustomDoc = {
-      id: "cd-" + Date.now(),
-      title: newTitle.trim(),
-      category: newCategory,
-      content: newContent.trim(),
-      date: "Just now",
-    };
-
-    setCustomDocs([newDoc, ...customDocs]);
+    DocumentStore.addDocument(venture.id, newTitle, newCategory, newContent);
+    setCustomDocs(DocumentStore.getDocuments(venture.id));
     setShowAddModal(false);
     setNewTitle("");
     setNewContent("");
@@ -197,7 +178,7 @@ ${cardsText}
                   </span>
                   <h3 className="text-sm font-bold text-slate-900 mt-1.5">{doc.title}</h3>
                 </div>
-                <span className="text-[11px] text-slate-400 shrink-0">{doc.date}</span>
+                <span className="text-[11px] text-slate-400 shrink-0">{new Date(doc.updatedAt).toLocaleDateString()}</span>
               </div>
               <p className="text-xs text-slate-600 line-clamp-3 bg-slate-50 p-3 rounded-xl border border-slate-100 font-mono">
                 {doc.content}
@@ -270,7 +251,7 @@ ${cardsText}
                 <label className="text-xs font-bold text-slate-700 block mb-1">Category</label>
                 <select
                   value={newCategory}
-                  onChange={(e) => setNewCategory(e.target.value as any)}
+                  onChange={(e) => setNewCategory(e.target.value as KnowledgeDocumentCategory)}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium focus:ring-2 focus:ring-blue-500 focus:outline-none"
                 >
                   <option value="Customer Interview">Customer Interview</option>

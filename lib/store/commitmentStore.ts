@@ -2,6 +2,8 @@
 
 import type { SprintRecord } from "@/lib/store/ventureStore";
 import { PersistenceClient } from "@/lib/store/persistenceClient";
+import { detectSprintPatterns } from "@/lib/agent/sprintPatternDetector";
+import { shouldApplyHydration } from "@/lib/store/hydrationGuard";
 
 export interface FounderCommitment {
   id: string;
@@ -30,6 +32,13 @@ const COMMITMENTS_KEY = "founderally_commitments_v1";
 const LEARNINGS_KEY = "founderally_learnings_v1";
 
 export class CommitmentStore {
+  private static commitmentVersions = new Map<string, number>();
+  private static learningVersions = new Map<string, number>();
+
+  private static bump(versions: Map<string, number>, ventureId: string): void {
+    versions.set(ventureId, (versions.get(ventureId) || 0) + 1);
+  }
+
   private static notify(): void {
     if (typeof window !== "undefined") window.dispatchEvent(new Event("founderally:persistence"));
   }
@@ -47,6 +56,8 @@ export class CommitmentStore {
   }
 
   static async hydrate(ventureId: string): Promise<boolean> {
+    const commitmentVersion = this.commitmentVersions.get(ventureId) || 0;
+    const learningVersion = this.learningVersions.get(ventureId) || 0;
     const cachedCommitments = this.getCommitments(ventureId);
     const cachedLearnings = this.getLearnings(ventureId);
     const [commitmentRows, learningRows] = await Promise.all([
@@ -67,7 +78,7 @@ export class CommitmentStore {
         completed_at: commitment.completedAt,
       })));
       hydrated = true;
-    } else if (commitmentRows) {
+    } else if (commitmentRows && shouldApplyHydration(commitmentVersion, this.commitmentVersions.get(ventureId) || 0)) {
       const commitments: FounderCommitment[] = commitmentRows.map((row) => ({
         id: String(row.id),
         ventureId: String(row.venture_id),
@@ -94,7 +105,7 @@ export class CommitmentStore {
         relevant_sprint_id: learning.relevantSprintId,
       })));
       hydrated = true;
-    } else if (learningRows) {
+    } else if (learningRows && shouldApplyHydration(learningVersion, this.learningVersions.get(ventureId) || 0)) {
       const learnings: LearningPattern[] = learningRows.map((row) => ({
         id: String(row.id),
         ventureId: String(row.venture_id),
@@ -135,6 +146,7 @@ export class CommitmentStore {
     deadline?: string,
     relatedTicketId?: string
   ): FounderCommitment {
+    this.bump(this.commitmentVersions, ventureId);
     const newCommitment: FounderCommitment = {
       id: "cm-" + Date.now() + Math.random().toString(36).substr(2, 4),
       ventureId,
@@ -193,6 +205,7 @@ export class CommitmentStore {
       localStorage.setItem(cacheKey, JSON.stringify(updated));
       const changed = updated.find((commitment) => commitment.id === id);
       if (changed) {
+        this.bump(this.commitmentVersions, changed.ventureId);
         void PersistenceClient.upsert("commitments", {
           id: changed.id,
           venture_id: changed.ventureId,
@@ -234,6 +247,7 @@ export class CommitmentStore {
     evidence: string = "Observed during sprint execution",
     suggestedCoachingBehavior: string = "Prioritize customer de-risking over premature building"
   ): LearningPattern {
+    this.bump(this.learningVersions, ventureId);
     const newLearning: LearningPattern = {
       id: "lp-" + Date.now() + Math.random().toString(36).substr(2, 4),
       ventureId,
@@ -270,49 +284,24 @@ export class CommitmentStore {
   }
 
   static detectFromSprintHistory(ventureId: string, sprintHistory: SprintRecord[] = []): LearningPattern[] {
-    if (sprintHistory.length < 2) return [];
-    const sorted = [...sprintHistory].sort((a, b) => a.sprintNumber - b.sprintNumber);
     const existing = this.getLearnings(ventureId);
-    const detected: Array<Omit<LearningPattern, "dateDetected">> = [];
-    const highCarryOver = sorted.filter((sprint) => sprint.totalTaken > 0 && sprint.outstanding / sprint.totalTaken >= 0.3);
-    if (highCarryOver.length >= 2) {
-      detected.push({
-        id: `lp-observed-carry-over-${ventureId}`,
-        ventureId,
-        pattern: "At least 30% of planned work was carried over in multiple completed sprints.",
-        evidence: highCarryOver.map((s) => `Sprint ${s.sprintNumber}: ${s.outstanding}/${s.totalTaken} outstanding`).join("; "),
-        confidence: highCarryOver.length >= 3 ? "High" : "Medium",
-        suggestedCoachingBehavior: "Reduce the next sprint commitment and ask which work can be removed before adding more.",
-        relevantSprintId: highCarryOver.at(-1)?.sprintNumber,
-      });
-    }
-    const blockedSprints = sorted.filter((sprint) => sprint.blocked > 0);
-    if (blockedSprints.length >= 2) {
-      detected.push({
-        id: `lp-observed-blockers-${ventureId}`,
-        ventureId,
-        pattern: "Blockers have recurred across multiple completed sprints.",
-        evidence: blockedSprints.map((s) => `Sprint ${s.sprintNumber}: ${s.blocked} blocked`).join("; "),
-        confidence: blockedSprints.length >= 3 ? "High" : "Medium",
-        suggestedCoachingBehavior: "Start stand-ups by resolving the oldest blocker and assigning a concrete owner.",
-        relevantSprintId: blockedSprints.at(-1)?.sprintNumber,
-      });
-    }
-    const recent = sorted.slice(-3);
-    if (recent.length === 3 && recent[0].completionRate > recent[1].completionRate && recent[1].completionRate > recent[2].completionRate) {
-      detected.push({
-        id: `lp-observed-declining-completion-${ventureId}`,
-        ventureId,
-        pattern: "Sprint completion rate has declined for three consecutive completed sprints.",
-        evidence: recent.map((s) => `Sprint ${s.sprintNumber}: ${s.completionRate}%`).join("; "),
-        confidence: "High",
-        suggestedCoachingBehavior: "Challenge scope growth and agree one measurable outcome before the next sprint begins.",
-        relevantSprintId: recent.at(-1)?.sprintNumber,
-      });
+    const detected: Array<Omit<LearningPattern, "dateDetected">> = detectSprintPatterns(ventureId, sprintHistory);
+
+    const activeIds = new Set(detected.map((candidate) => candidate.id));
+    const stale = existing.filter((learning) =>
+      learning.id.startsWith("lp-observed-") && !activeIds.has(learning.id)
+    );
+    if (stale.length > 0 && typeof window !== "undefined") {
+      this.bump(this.learningVersions, ventureId);
+      const cacheKey = PersistenceClient.cacheKey(LEARNINGS_KEY);
+      const all: LearningPattern[] = JSON.parse(localStorage.getItem(cacheKey) || "[]");
+      localStorage.setItem(cacheKey, JSON.stringify(all.filter((learning) => !stale.some((item) => item.id === learning.id))));
+      for (const learning of stale) void PersistenceClient.remove("learnings", ventureId, learning.id);
     }
 
     const newPatterns = detected.filter((candidate) => !existing.some((item) => item.id === candidate.id));
-    return newPatterns.map((candidate) => {
+    const created = newPatterns.map((candidate) => {
+      this.bump(this.learningVersions, ventureId);
       const learning: LearningPattern = { ...candidate, dateDetected: new Date().toISOString() };
       if (typeof window !== "undefined") {
         const cacheKey = PersistenceClient.cacheKey(LEARNINGS_KEY);
@@ -332,5 +321,7 @@ export class CommitmentStore {
       });
       return learning;
     });
+    if (stale.length > 0 || created.length > 0) this.notify();
+    return created;
   }
 }

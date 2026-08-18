@@ -6,9 +6,15 @@ import { BAAgentService, ToolExecutionResult } from "@/lib/agent/baAgentService"
 import { AIOperationsLogger } from "@/lib/agent/aiOperationsLog";
 import { CommitmentStore } from "@/lib/store/commitmentStore";
 import { MemoryService } from "@/lib/db/memoryService";
+import { DocumentStore } from "@/lib/store/documentStore";
 import { buildGeminiLiveConfig } from "@/lib/agent/geminiLiveConfig";
 import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
 import { DEFAULT_ADVISOR, type AdvisorPersona } from "@/lib/config/advisorPersonas";
+import {
+  isProposalCancellation,
+  isProposalConfirmation,
+  isTicketMutationAction,
+} from "@/lib/agent/ticketProposal";
 
 export type LiveSessionState =
   | "idle"
@@ -58,6 +64,8 @@ export class GeminiLiveService {
   private readonly advisor: AdvisorPersona;
   private connectGeneration = 0;
   private authAbortController: AbortController | null = null;
+  private lastFinalUserTranscript = "";
+  private pendingTicketMutation: { name: string; args: Record<string, unknown> } | null = null;
 
   constructor(
     venture: Venture,
@@ -87,6 +95,7 @@ export class GeminiLiveService {
       await Promise.all([
         CommitmentStore.hydrate(this.venture.id),
         MemoryService.hydrate(this.venture.id),
+        DocumentStore.hydrate(this.venture.id),
         AIOperationsLogger.hydrate(this.venture.id),
       ]);
       const context = {
@@ -94,6 +103,7 @@ export class GeminiLiveService {
         commitments: CommitmentStore.getOutstandingCommitments(this.venture.id),
         learnings: CommitmentStore.getLearnings(this.venture.id),
         memories: MemoryService.getMemories(this.venture.id),
+        documents: DocumentStore.getDocuments(this.venture.id),
         voiceName: this.advisor.voiceName,
         advisor: {
           name: this.advisor.name,
@@ -111,6 +121,7 @@ export class GeminiLiveService {
           commitments: context.commitments,
           learnings: context.learnings,
           memories: context.memories,
+          documents: context.documents,
           advisorId: this.advisor.id,
           voiceName: this.advisor.voiceName,
         }),
@@ -256,6 +267,10 @@ export class GeminiLiveService {
       this.callbacks.onTranscript("user", content.interimInputTranscription.text, false);
     }
     if (content?.inputTranscription?.text) {
+      this.lastFinalUserTranscript = content.inputTranscription.text.trim();
+      if (isProposalCancellation(this.lastFinalUserTranscript)) {
+        this.pendingTicketMutation = null;
+      }
       this.callbacks.onTranscript("user", content.inputTranscription.text, true);
       this.callbacks.onStateChange("thinking");
     }
@@ -285,9 +300,42 @@ export class GeminiLiveService {
       const functionResponses = message.toolCall.functionCalls.map((call) => {
         const startedAt = performance.now();
         const args = (call.args || {}) as Record<string, unknown>;
-        this.callbacks.onToolExecuting(call.name || "unknown_tool", args);
+        const toolName = call.name || "unknown_tool";
+        const isTicketMutation = isTicketMutationAction({ type: toolName });
+        const pendingMatches = this.pendingTicketMutation?.name === toolName
+          && JSON.stringify(this.pendingTicketMutation.args) === JSON.stringify(args);
+
+        if (isTicketMutation && !(pendingMatches && isProposalConfirmation(this.lastFinalUserTranscript))) {
+          this.pendingTicketMutation = { name: toolName, args };
+          const pendingResult: ToolExecutionResult = {
+            toolName,
+            success: true,
+            message: "This ticket change is prepared but has not been applied. Describe the exact proposed changes and ask the human to confirm yes or no.",
+            data: { requiresConfirmation: true, proposedArguments: args },
+          };
+          this.callbacks.onToolExecuted(toolName, pendingResult);
+          AIOperationsLogger.logOperation({
+            ventureId: this.venture.id,
+            ceremony: "daily_standup",
+            geminiModel: GEMINI_CONFIG.LIVE_MODEL,
+            toolRequested: `live_confirmation_required:${toolName}`,
+            toolArguments: args,
+            toolResult: { success: true, requiresConfirmation: true, returnedToSameSession: true },
+            reasoningCategory: "board_mutation",
+            latencyMs: Math.round(performance.now() - startedAt),
+            success: true,
+          });
+          return {
+            id: call.id,
+            name: call.name,
+            response: { output: { success: true, requiresConfirmation: true, message: pendingResult.message } },
+          };
+        }
+
+        if (isTicketMutation) this.pendingTicketMutation = null;
+        this.callbacks.onToolExecuting(toolName, args);
         const result = BAAgentService.executeTool(
-          call.name || "unknown_tool",
+          toolName,
           args,
           this.venture,
           "daily_standup"
@@ -296,20 +344,20 @@ export class GeminiLiveService {
           this.venture = result.updatedVenture;
           this.callbacks.onVentureUpdated(this.venture);
         }
-        this.callbacks.onToolExecuted(call.name || "unknown_tool", result);
+        this.callbacks.onToolExecuted(toolName, result);
 
         AIOperationsLogger.logOperation({
           ventureId: this.venture.id,
           ceremony: "daily_standup",
           geminiModel: GEMINI_CONFIG.LIVE_MODEL,
-          toolRequested: `live_roundtrip:${call.name || "unknown_tool"}`,
+          toolRequested: `live_roundtrip:${toolName}`,
           toolArguments: args,
           toolResult: {
             success: result.success,
             message: result.message,
             returnedToSameSession: true,
           },
-          reasoningCategory: call.name === "record_commitment" ? "accountability" : "board_mutation",
+          reasoningCategory: toolName === "record_commitment" ? "accountability" : "board_mutation",
           latencyMs: Math.round(performance.now() - startedAt),
           success: result.success,
         });

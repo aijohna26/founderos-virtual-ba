@@ -1,8 +1,8 @@
 # FounderAlly — Real-Time Adaptive AI Business Analyst for Solo Founders
 
-> **You may be building solo, but you have an AI Business Analyst who understands the work, challenges your assumptions, remembers what you committed to, and turns up every morning.**
+> **Whether you are building solo or with a small venture team, you have an AI Business Analyst who understands the work, challenges assumptions, remembers commitments, and turns up every morning.**
 
-FounderAlly pairs solo founders with a selectable team of AI business advisors powered by **Google Gemini Live**, native tool execution, and adaptive sprint memory.
+FounderAlly gives founders and small venture teams a selectable AI business advisor, shared venture work, native board tools, and adaptive sprint memory. Gemini Live is used when a supported Live session is available, with the existing speech/text/TTS path retained as the fallback.
 
 ---
 
@@ -128,4 +128,4 @@ Open [http://localhost:3000](http://localhost:3000) to access the dashboard.
 
 ## Persistence and current scope
 
-Commitments, learnings, memory facts, and AI Ops events persist in Supabase through Clerk-authenticated, venture-scoped server routes after applying `supabase/migrations/20260817120000_durable_founder_memory.sql` and configuring the modern `SUPABASE_SECRET_KEY` (`sb_secret_...`). A user-scoped browser cache preserves the demo when the database is temporarily unavailable. Venture board/chat state remains browser-backed. Documents remain in the primary navigation. Strategy, Assumptions, Requirements, Experiments, Metrics, and Roadmap remain behind `SHOW_ADVANCED_FEATURES`.
+Venture workspaces (including board and chat), commitments, learnings, knowledge documents, memory facts, and AI Ops events persist in Supabase through Clerk-authenticated, venture-scoped server routes after applying the migrations in `supabase/migrations/` and configuring the modern `SUPABASE_SECRET_KEY` (`sb_secret_...`). A user-scoped browser cache preserves the demo when the database is temporarily unavailable, and hydration guards prevent a late remote response from overwriting newer local board, chat, document, commitment, memory, or telemetry changes. Saved knowledge documents are injected into both text and Gemini Live reasoning with title-based evidence attribution. Documents remain in the primary navigation. Strategy, Assumptions, Requirements, Experiments, Metrics, and Roadmap remain behind `SHOW_ADVANCED_FEATURES`.

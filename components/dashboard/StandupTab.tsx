@@ -8,7 +8,8 @@ import {
   Sparkles,
   ArrowRight,
   Layers,
-  Activity
+  Activity,
+  Users
 } from "lucide-react";
 import { Venture, VentureStore, KanbanCard } from "@/lib/store/ventureStore";
 import { VoiceSphereVisualizer, type BusinessPersona, type AgentAudioState } from "@/components/dashboard/VoiceSphereVisualizer";
@@ -17,6 +18,9 @@ import { GeminiLiveService, LiveSessionState } from "@/lib/agent/geminiLiveServi
 import { StandupPrepEngine } from "@/lib/agent/standupPrepEngine";
 import { CommitmentStore } from "@/lib/store/commitmentStore";
 import { VoiceEngine } from "@/lib/voice/voiceEngine";
+import { formatInProgressAge, getInProgressAgeDays } from "@/lib/agent/ticketAging";
+import { captureStandupSnapshot, finishActiveStandupSession } from "@/lib/agent/ticketActivity";
+import { memberDisplayName, memberInitials } from "@/lib/venture/members";
 
 export interface StandupTabProps {
   venture: Venture;
@@ -40,6 +44,11 @@ export function StandupTab({
   const [activeToolNotice, setActiveToolNotice] = useState<string | null>(null);
   const [audioAnalyser, setAudioAnalyser] = useState<AnalyserNode | null>(null);
   const [, setPersistenceRevision] = useState(0);
+  const eligibleParticipants = (venture.members || []).filter((member) => member.status === "active" && member.canJoinStandup);
+  const [participantIds, setParticipantIds] = useState<string[]>(() => {
+    const owner = eligibleParticipants.find((member) => member.role === "owner");
+    return owner ? [owner.id] : eligibleParticipants.slice(0, 1).map((member) => member.id);
+  });
 
   const liveClientRef = useRef<GeminiLiveService | null>(null);
   const fallbackActiveRef = useRef(false);
@@ -103,16 +112,22 @@ export function StandupTab({
       setActiveToolNotice(null);
       setAudioAnalyser(null);
       fallbackActiveRef.current = false;
+      const completedVenture = finishActiveStandupSession(venture);
+      VentureStore.updateVenture(completedVenture);
+      onUpdateVenture(completedVenture);
       return;
     }
 
     fallbackActiveRef.current = false;
     setIsDailyCallActive(true);
     setSessionState("connecting");
+    const standupVenture = captureStandupSnapshot(venture, new Date().toISOString(), participantIds);
+    VentureStore.updateVenture(standupVenture);
+    onUpdateVenture(standupVenture);
 
     // Initialize Gemini Live Service
     const client = new GeminiLiveService(
-      venture,
+      standupVenture,
       {
         onStateChange: (st) => {
           setSessionState(st);
@@ -137,7 +152,7 @@ export function StandupTab({
           console.warn("Gemini Live notice:", err);
           liveClientRef.current?.disconnect();
           liveClientRef.current = null;
-          handleFallbackGreeting();
+          handleFallbackGreeting(standupVenture);
         },
       },
       selectedPersona
@@ -148,11 +163,11 @@ export function StandupTab({
     setAudioAnalyser(client.getAudioAnalyser());
   };
 
-  const handleFallbackGreeting = () => {
+  const handleFallbackGreeting = (activeVenture: Venture = venture) => {
     if (fallbackActiveRef.current) return;
     fallbackActiveRef.current = true;
     VoiceEngine.unlockAudio();
-    const agenda = StandupPrepEngine.prepareAgenda(venture);
+    const agenda = StandupPrepEngine.prepareAgenda(activeVenture);
     setSessionState("speaking");
 
     VoiceEngine.speak(
@@ -210,6 +225,35 @@ export function StandupTab({
 
   return (
     <div className="max-w-6xl mx-auto space-y-6 animate-in fade-in duration-200">
+      {eligibleParticipants.length > 0 && (
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-xs flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="w-8 h-8 rounded-xl bg-slate-900 text-white flex items-center justify-center"><Users className="w-4 h-4" /></span>
+            <div>
+              <p className="text-xs font-black text-slate-900">Who is in today&apos;s stand-up?</p>
+              <p className="text-[10px] text-slate-500">The BA will address attendees by name and assignment.</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {eligibleParticipants.map((member) => {
+              const selected = participantIds.includes(member.id);
+              return (
+                <button
+                  key={member.id}
+                  type="button"
+                  disabled={isDailyCallActive}
+                  onClick={() => setParticipantIds((current) => selected ? current.filter((id) => id !== member.id) : [...current, member.id])}
+                  className={`inline-flex items-center gap-1.5 rounded-full border py-1 pl-1 pr-2.5 text-[10px] font-bold transition-colors ${selected ? "border-blue-300 bg-blue-50 text-blue-800" : "border-slate-200 bg-slate-50 text-slate-500"} disabled:cursor-not-allowed`}
+                >
+                  <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-black ${selected ? "bg-blue-600 text-white" : "bg-slate-200 text-slate-600"}`}>{memberInitials(member)}</span>
+                  {memberDisplayName(member)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* 1. Interactive Voice Sphere Visualizer & Strict Persona Workspace */}
       <VoiceSphereVisualizer
         persona={selectedPersona}
@@ -294,17 +338,33 @@ export function StandupTab({
               </p>
             ) : (
               <div className="space-y-2">
-                {[...todayCards, ...inProgressCards].slice(0, 4).map((card) => (
-                  <div
-                    key={card.id}
-                    className="p-2.5 rounded-xl bg-blue-50/60 border border-blue-100/80 text-xs font-medium text-slate-800 flex items-center justify-between"
-                  >
-                    <span className="truncate pr-2 font-semibold">{card.title}</span>
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-200 text-blue-800 shrink-0">
-                      {card.category || "Feature"}
-                    </span>
-                  </div>
-                ))}
+                {[...todayCards, ...inProgressCards].slice(0, 4).map((card) => {
+                  const ageDays = getInProgressAgeDays(card);
+                  const age = formatInProgressAge(ageDays);
+                  return (
+                    <div
+                      key={card.id}
+                      className="p-2.5 rounded-xl bg-blue-50/60 border border-blue-100/80 text-xs font-medium text-slate-800 flex items-center justify-between gap-2"
+                    >
+                      <span className="truncate font-semibold">{card.title}</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {age && (
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                            (ageDays || 0) >= 3
+                              ? "bg-rose-50 text-rose-700 border-rose-200"
+                              : "bg-amber-50 text-amber-700 border-amber-200"
+                          }`}>
+                            <Clock className="w-2.5 h-2.5" />
+                            {card.inProgressSinceInferred ? "~" : ""}{age}
+                          </span>
+                        )}
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-200 text-blue-800">
+                          {card.category || "Feature"}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

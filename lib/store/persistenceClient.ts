@@ -1,6 +1,6 @@
 "use client";
 
-export type PersistenceResource = "commitments" | "learnings" | "memories" | "operations";
+export type PersistenceResource = "ventures" | "commitments" | "learnings" | "memories" | "documents" | "operations";
 
 export class PersistenceClient {
   private static userScope = "signed-out";
@@ -23,9 +23,10 @@ export class PersistenceClient {
     return scopedKey;
   }
 
-  static async list(resource: PersistenceResource, ventureId: string): Promise<Record<string, unknown>[] | null> {
+  static async list(resource: PersistenceResource, ventureId?: string): Promise<Record<string, unknown>[] | null> {
     try {
-      const params = new URLSearchParams({ resource, ventureId });
+      const params = new URLSearchParams({ resource });
+      if (ventureId) params.set("ventureId", ventureId);
       const response = await fetch(`/api/persistence?${params}`, {
         credentials: "same-origin",
         cache: "no-store",

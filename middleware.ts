@@ -5,6 +5,10 @@ const isPublicRoute = createRouteMatcher([
   "/",
   "/sign-in(.*)",
   "/sign-up(.*)",
+  // Recipients must be able to inspect a signed invitation before signing in.
+  // The PATCH handler still authenticates and verifies the invited Clerk email.
+  "/invite(.*)",
+  "/api/venture-invitations(.*)",
   "/api/ai-analyst(.*)",
   "/api/generate-venture-analysis(.*)",
   // This route performs its own Clerk auth so unsigned API callers receive JSON 401.

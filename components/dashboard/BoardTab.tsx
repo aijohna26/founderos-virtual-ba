@@ -21,11 +21,15 @@ import {
   X,
   History,
   Zap,
-  CheckCircle2
+  CheckCircle2,
+  Timer
 } from "lucide-react";
 import { Venture, VentureStore, KanbanCard } from "@/lib/store/ventureStore";
 import { CardDetailModal } from "@/components/dashboard/CardDetailModal";
 import { CompleteSprintModal } from "@/components/dashboard/CompleteSprintModal";
+import { formatInProgressAge, getInProgressAgeDays, transitionTicketStatus } from "@/lib/agent/ticketAging";
+import { appendTicketActivities, appendTicketActivity, describeTicketChanges } from "@/lib/agent/ticketActivity";
+import { cardAssignees } from "@/lib/venture/members";
 
 export interface BoardTabProps {
   venture: Venture;
@@ -44,6 +48,22 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
   const [expandedSprintNum, setExpandedSprintNum] = useState<number | null>(null);
 
   const columns = venture.columns;
+  const liveSelectedCard = selectedCard
+    ? (Object.keys(venture.columns) as Array<keyof Venture["columns"]>).flatMap((colKey) =>
+        (venture.columns[colKey]?.items || []).map((card) => ({ card, colKey }))
+      ).find(({ card }) => card.id === selectedCard.card.id) || selectedCard
+    : null;
+
+  const openCardForDiscussion = (card: KanbanCard, colKey: keyof Venture["columns"]) => {
+    setSelectedCard({ card, colKey });
+    window.dispatchEvent(new CustomEvent("founderally:focus-ticket", {
+      detail: {
+        ventureId: venture.id,
+        ticketId: card.id,
+        title: card.title,
+      },
+    }));
+  };
 
   const getTagBadgeStyle = (category: KanbanCard["category"]) => {
     switch (category) {
@@ -72,15 +92,22 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
       return;
     }
 
-    const newCard: KanbanCard = {
+    const now = new Date().toISOString();
+    const baseCard: KanbanCard = {
       id: "c-" + Date.now(),
       title: quickAddTitle.trim(),
       category: "Feature",
       owner: "YOU",
+      assigneeIds: [venture.members?.find((member) => member.role === "owner")?.id || `${venture.id}:owner`],
       priority: "Medium",
+      createdAt: now,
+      statusChangedAt: now,
     };
+    const newCard = colKey === "in_progress"
+      ? transitionTicketStatus(baseCard, "today", "in_progress", now)
+      : baseCard;
 
-    const updatedVenture: Venture = {
+    let updatedVenture: Venture = {
       ...venture,
       columns: {
         ...venture.columns,
@@ -90,6 +117,15 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
         },
       },
     };
+    updatedVenture = appendTicketActivity(updatedVenture, {
+      ticketId: newCard.id,
+      ticketTitle: newCard.title,
+      type: "created",
+      actor: "founder",
+      source: "board",
+      summary: `Created "${newCard.title}" in ${venture.columns[colKey].name}`,
+      toColumn: colKey,
+    });
 
     VentureStore.updateVenture(updatedVenture);
     onUpdateVenture(updatedVenture);
@@ -107,9 +143,10 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
     if (!card) return;
 
     const updatedFrom = (venture.columns[fromCol]?.items || []).filter((c) => c.id !== cardId);
-    const updatedTo = [...(venture.columns[toCol]?.items || []), { ...card, completed: toCol === "done" }];
+    const transitionedCard = transitionTicketStatus(card, fromCol, toCol);
+    const updatedTo = [...(venture.columns[toCol]?.items || []), { ...transitionedCard, completed: toCol === "done" }];
 
-    const updatedVenture: Venture = {
+    let updatedVenture: Venture = {
       ...venture,
       columns: {
         ...venture.columns,
@@ -117,20 +154,42 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
         [toCol]: { ...venture.columns[toCol], items: updatedTo },
       },
     };
+    updatedVenture = appendTicketActivity(updatedVenture, {
+      ticketId: transitionedCard.id,
+      ticketTitle: transitionedCard.title,
+      type: "moved",
+      actor: "founder",
+      source: "board",
+      summary: `Moved "${transitionedCard.title}" from ${venture.columns[fromCol].name} to ${venture.columns[toCol].name}`,
+      fromColumn: fromCol,
+      toColumn: toCol,
+    });
 
     VentureStore.updateVenture(updatedVenture);
     onUpdateVenture(updatedVenture);
   };
 
   const handleDeleteCard = (cardId: string, colKey: keyof Venture["columns"]) => {
+    const deletedCard = (venture.columns[colKey]?.items || []).find((card) => card.id === cardId);
     const updatedCol = (venture.columns[colKey]?.items || []).filter((c) => c.id !== cardId);
-    const updatedVenture: Venture = {
+    let updatedVenture: Venture = {
       ...venture,
       columns: {
         ...venture.columns,
         [colKey]: { ...venture.columns[colKey], items: updatedCol },
       },
     };
+    if (deletedCard) {
+      updatedVenture = appendTicketActivity(updatedVenture, {
+        ticketId: deletedCard.id,
+        ticketTitle: deletedCard.title,
+        type: "deleted",
+        actor: "founder",
+        source: "board",
+        summary: `Deleted "${deletedCard.title}" from ${venture.columns[colKey].name}`,
+        fromColumn: colKey,
+      });
+    }
     VentureStore.updateVenture(updatedVenture);
     onUpdateVenture(updatedVenture);
   };
@@ -139,24 +198,53 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
     if (!selectedCard) return;
     const fromCol = selectedCard.colKey;
     const toCol = targetCol || fromCol;
+    const existingCard = (venture.columns[fromCol]?.items || []).find((card) => card.id === updatedCard.id) || selectedCard.card;
+
+    const transitionedCard = transitionTicketStatus(updatedCard, fromCol, toCol);
+    const changes = describeTicketChanges(existingCard, transitionedCard);
+    const events = [];
+    if (fromCol !== toCol) {
+      events.push({
+        ticketId: transitionedCard.id,
+        ticketTitle: transitionedCard.title,
+        type: "moved" as const,
+        actor: "founder" as const,
+        source: "ticket_modal" as const,
+        summary: `Moved "${transitionedCard.title}" from ${venture.columns[fromCol].name} to ${venture.columns[toCol].name}`,
+        fromColumn: fromCol,
+        toColumn: toCol,
+      });
+    }
+    if (changes.length > 0) {
+      events.push({
+        ticketId: transitionedCard.id,
+        ticketTitle: transitionedCard.title,
+        type: changes.includes("acceptance criteria") ? "criteria_updated" as const : "updated" as const,
+        actor: "founder" as const,
+        source: "ticket_modal" as const,
+        summary: `Updated ${changes.join(", ")} on "${transitionedCard.title}"`,
+        changes,
+      });
+    }
 
     if (fromCol === toCol) {
       const updatedList = (venture.columns[fromCol]?.items || []).map((c) =>
-        c.id === updatedCard.id ? updatedCard : c
+        c.id === transitionedCard.id ? transitionedCard : c
       );
-      const updatedVenture: Venture = {
+      let updatedVenture: Venture = {
         ...venture,
         columns: {
           ...venture.columns,
           [fromCol]: { ...venture.columns[fromCol], items: updatedList },
         },
       };
+      updatedVenture = appendTicketActivities(updatedVenture, events);
       VentureStore.updateVenture(updatedVenture);
       onUpdateVenture(updatedVenture);
     } else {
-      const updatedFrom = (venture.columns[fromCol]?.items || []).filter((c) => c.id !== updatedCard.id);
-      const updatedTo = [...(venture.columns[toCol]?.items || []), updatedCard];
-      const updatedVenture: Venture = {
+      const updatedFrom = (venture.columns[fromCol]?.items || []).filter((c) => c.id !== transitionedCard.id);
+      const updatedTo = [...(venture.columns[toCol]?.items || []), transitionedCard];
+      let updatedVenture: Venture = {
         ...venture,
         columns: {
           ...venture.columns,
@@ -164,11 +252,12 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
           [toCol]: { ...venture.columns[toCol], items: updatedTo },
         },
       };
+      updatedVenture = appendTicketActivities(updatedVenture, events);
       VentureStore.updateVenture(updatedVenture);
       onUpdateVenture(updatedVenture);
     }
 
-    setSelectedCard({ card: updatedCard, colKey: toCol });
+    setSelectedCard({ card: transitionedCard, colKey: toCol });
   };
 
   // Drag and drop handlers
@@ -468,6 +557,9 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
                 {filteredItems.map((item: KanbanCard) => {
                   const checklistTotal = item.checklists?.length || 0;
                   const checklistDone = item.checklists?.filter((c) => c.done).length || 0;
+                  const ageDays = colKey === "in_progress" ? getInProgressAgeDays(item) : null;
+                  const ageLabel = formatInProgressAge(ageDays);
+                  const assignees = cardAssignees(venture, item);
 
                   return (
                     <div
@@ -478,7 +570,7 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
                         setDraggedCard(null);
                         setDragOverCol(null);
                       }}
-                      onClick={() => setSelectedCard({ card: item, colKey })}
+                      onClick={() => openCardForDiscussion(item, colKey)}
                       className="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-2xs hover:shadow-md hover:border-blue-400 transition-all flex flex-col justify-between min-h-[124px] group relative cursor-pointer hover:-translate-y-0.5 min-w-0 w-full"
                     >
                       {/* Top Label & Priority */}
@@ -515,6 +607,19 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
                       {/* Trello Badges Row (Description, Checklist, Assumption, Progress) */}
                       <div className="flex items-center justify-between pt-1 border-t border-slate-100/70 text-[10px] text-slate-400 font-medium">
                         <div className="flex items-center gap-2">
+                          {ageLabel && (
+                            <div
+                              className={`flex items-center gap-1 px-1.5 py-0.5 rounded-md border font-bold ${
+                                (ageDays || 0) >= 3
+                                  ? "bg-rose-50 text-rose-700 border-rose-200"
+                                  : "bg-amber-50 text-amber-700 border-amber-200"
+                              }`}
+                              title={`In progress ${item.inProgressSinceInferred ? "approximately " : ""}since ${new Date(item.inProgressSince!).toLocaleDateString()}`}
+                            >
+                              <Timer className="w-2.5 h-2.5" />
+                              <span>{item.inProgressSinceInferred ? "~" : ""}{ageLabel}</span>
+                            </div>
+                          )}
                           {item.description && (
                             <div className="flex items-center gap-0.5" title="Has description">
                               <AlignLeft className="w-3 h-3 text-slate-400" />
@@ -554,10 +659,15 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
                               <Check className="w-2.5 h-2.5 stroke-[3]" />
                             </div>
                           )}
-                          {item.owner && (
-                            <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-bold text-[9px] border border-slate-200">
-                              {item.owner}
-                            </span>
+                          {assignees.length > 0 && (
+                            <div className="flex -space-x-1" title={assignees.map((assignee) => assignee.name).join(", ")}>
+                              {assignees.slice(0, 3).map((assignee) => (
+                                <span key={assignee.id} className={`w-5 h-5 rounded-full ring-2 ring-white flex items-center justify-center text-[7px] font-black ${assignee.isAI ? "bg-slate-900 text-blue-300" : "bg-blue-600 text-white"}`}>
+                                  {assignee.initials}
+                                </span>
+                              ))}
+                              {assignees.length > 3 && <span className="w-5 h-5 rounded-full ring-2 ring-white bg-slate-200 text-slate-700 flex items-center justify-center text-[7px] font-black">+{assignees.length - 3}</span>}
+                            </div>
                           )}
                         </div>
                       </div>
@@ -618,10 +728,11 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
       </div>
 
       {/* 3. Trello Card Detail Modal */}
-      {selectedCard && (
+      {liveSelectedCard && (
         <CardDetailModal
-          card={selectedCard.card}
-          columnKey={selectedCard.colKey}
+          key={`${liveSelectedCard.card.id}-${liveSelectedCard.colKey}-${venture.ticketActivity?.at(-1)?.id || "initial"}`}
+          card={liveSelectedCard.card}
+          columnKey={liveSelectedCard.colKey}
           venture={venture}
           isOpen={true}
           onClose={() => setSelectedCard(null)}

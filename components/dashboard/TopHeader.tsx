@@ -24,6 +24,8 @@ import { exportBoardToCSV, exportVentureToJSON, exportVentureToMarkdown } from "
 import { SHOW_ADVANCED_FEATURES } from "@/lib/config/featureFlags";
 import { AIOperationsModal } from "@/components/dashboard/AIOperationsModal";
 import { Activity } from "lucide-react";
+import { VentureMembersModal } from "@/components/dashboard/VentureMembersModal";
+import { memberInitials } from "@/lib/venture/members";
 
 export interface TopHeaderProps {
   activeTab: string;
@@ -56,9 +58,8 @@ export function TopHeader({
   const [optionsMenuOpen, setOptionsMenuOpen] = useState(false);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
   const [aiOpsModalOpen, setAiOpsModalOpen] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [invited, setInvited] = useState(false);
   const [exportSuccessMsg, setExportSuccessMsg] = useState<string | null>(null);
+  const visibleMembers = (activeVenture.members || []).filter((member) => member.status !== "removed");
 
   const primaryTabs = [
     { id: "Today", label: "Today" },
@@ -220,10 +221,17 @@ export function TopHeader({
           {/* Invite Collaborator */}
           <button
             onClick={() => setInviteModalOpen(true)}
-            className="hidden md:inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition-colors cursor-pointer"
+            className="hidden md:inline-flex items-center gap-2 px-2.5 py-1.5 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-xs transition-colors cursor-pointer border border-slate-200"
           >
-            <UserPlus className="w-3.5 h-3.5 text-slate-500" />
-            <span>Invite</span>
+            <div className="flex -space-x-1.5">
+              {visibleMembers.slice(0, 3).map((member) => (
+                <span key={member.id} className="w-6 h-6 rounded-full bg-slate-900 text-white ring-2 ring-slate-100 flex items-center justify-center text-[8px] font-black">
+                  {memberInitials(member)}
+                </span>
+              ))}
+            </div>
+            <span>{visibleMembers.length} {visibleMembers.length === 1 ? "member" : "members"}</span>
+            <UserPlus className="w-3.5 h-3.5 text-blue-600" />
           </button>
 
           {/* Notification bell */}
@@ -372,87 +380,12 @@ export function TopHeader({
         })}
       </div>
 
-      {/* Invite Modal */}
-      {inviteModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold text-slate-900">Invite Co-Founder / Team</h3>
-              <button
-                onClick={() => setInviteModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 font-bold text-sm"
-              >
-                ✕
-              </button>
-            </div>
-            <p className="text-xs text-slate-500">
-              Share this workspace with advisors, investors, or co-founders to review hypotheses & BA reports.
-            </p>
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                const inviteUrl = typeof window !== "undefined" ? `${window.location.origin}/dashboard` : "https://getfounderally.com/dashboard";
-                if (typeof navigator !== "undefined" && navigator.clipboard) {
-                  navigator.clipboard.writeText(inviteUrl);
-                }
-
-                if (inviteEmail.trim()) {
-                  const subject = encodeURIComponent(`Join ${activeVenture.name} on FounderAlly`);
-                  const body = encodeURIComponent(
-                    `Hey,\n\nI've invited you to our startup workspace for ${activeVenture.name} on FounderAlly.\n\nJoin our AI Business Analyst workspace here: ${inviteUrl}\n\nCheers!`
-                  );
-                  window.open(`mailto:${inviteEmail.trim()}?subject=${subject}&body=${body}`, "_blank");
-                }
-
-                setInvited(true);
-                setExportSuccessMsg("Workspace invite link copied to clipboard & email draft opened!");
-                setTimeout(() => {
-                  setInvited(false);
-                  setInviteModalOpen(false);
-                  setInviteEmail("");
-                  setExportSuccessMsg(null);
-                }, 2000);
-              }}
-              className="space-y-4"
-            >
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-slate-700">Email Address</label>
-                <input
-                  type="email"
-                  value={inviteEmail}
-                  onChange={(e) => setInviteEmail(e.target.value)}
-                  placeholder="co-founder@startup.com"
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  required
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setInviteModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 rounded-xl text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-md flex items-center gap-1.5"
-                >
-                  {invited ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-emerald-300" />
-                      <span>Invite Sent!</span>
-                    </>
-                  ) : (
-                    <span>Send Invite</span>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <VentureMembersModal
+        isOpen={inviteModalOpen}
+        onClose={() => setInviteModalOpen(false)}
+        venture={activeVenture}
+        onUpdateVenture={onUpdateVenture}
+      />
 
       {/* AI Operations & Telemetry Modal */}
       <AIOperationsModal

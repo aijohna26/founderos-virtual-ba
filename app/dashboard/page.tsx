@@ -28,10 +28,14 @@ import { CommitmentStore } from "@/lib/store/commitmentStore";
 import { MemoryService } from "@/lib/db/memoryService";
 import { AIOperationsLogger } from "@/lib/agent/aiOperationsLog";
 import { PersistenceClient } from "@/lib/store/persistenceClient";
-import { useAuth } from "@clerk/nextjs";
+import { useAuth, useUser } from "@clerk/nextjs";
+import { DocumentStore } from "@/lib/store/documentStore";
+import { captureStandupSnapshot } from "@/lib/agent/ticketActivity";
+import { claimVentureOwner } from "@/lib/venture/members";
 
 export default function DashboardPage() {
   const { userId, isLoaded: isAuthLoaded } = useAuth();
+  const { user } = useUser();
   PersistenceClient.setUserScope(userId);
   const [activeTab, setActiveTab] = useState<string>("Today");
   const [ventures, setVentures] = useState<Venture[]>([]);
@@ -53,6 +57,34 @@ export default function DashboardPage() {
     setMounted(true);
   }, []);
 
+  useEffect(() => {
+    if (!mounted || !isAuthLoaded || !userId) return;
+    let active = true;
+    void VentureStore.hydrate().then((hydratedVentures) => {
+      if (!active || hydratedVentures.length === 0) return;
+      setVentures(hydratedVentures);
+      setActiveVentureId((current) =>
+        hydratedVentures.some((venture) => venture.id === current) ? current : hydratedVentures[0].id
+      );
+    });
+    return () => {
+      active = false;
+    };
+  }, [mounted, isAuthLoaded, userId]);
+
+  useEffect(() => {
+    if (!mounted || !userId || !user || ventures.length === 0) return;
+    const email = user.primaryEmailAddress?.emailAddress || "";
+    const name = user.fullName || user.firstName || "You";
+    const next = ventures.map((venture) => claimVentureOwner(venture, { userId, email, name }));
+    const changed = next.some((venture, index) => venture !== ventures[index]);
+    if (!changed) return;
+    setVentures(next);
+    next.forEach((venture, index) => {
+      if (venture !== ventures[index]) VentureStore.updateVenture(venture);
+    });
+  }, [mounted, userId, user, ventures]);
+
   const activeVenture =
     ventures.find((v) => v.id === activeVentureId) ||
     ventures[0] ||
@@ -64,6 +96,7 @@ export default function DashboardPage() {
     void Promise.all([
       CommitmentStore.hydrate(activeVenture.id),
       MemoryService.hydrate(activeVenture.id),
+      DocumentStore.hydrate(activeVenture.id),
       AIOperationsLogger.hydrate(activeVenture.id),
     ]).then(() => {
       if (active) CommitmentStore.detectFromSprintHistory(activeVenture.id, activeVenture.sprintHistory);
@@ -228,6 +261,8 @@ export default function DashboardPage() {
       <DailyCallAlertModal
         isDailyCallActive={isDailyCallActive}
         onJoinCall={() => {
+          const standupVenture = captureStandupSnapshot(activeVenture);
+          handleUpdateVenture(standupVenture);
           setIsDailyCallActive(true);
           setActiveTab("Board");
         }}

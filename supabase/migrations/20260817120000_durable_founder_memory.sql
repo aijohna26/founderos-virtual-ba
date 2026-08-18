@@ -1,3 +1,13 @@
+create table if not exists public.founder_ventures (
+  id text not null,
+  user_id text not null,
+  venture_id text not null,
+  workspace jsonb not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (id, user_id)
+);
+
 create table if not exists public.founder_commitments (
   id text not null,
   user_id text not null,
@@ -53,6 +63,18 @@ create table if not exists public.ai_operation_logs (
   primary key (id, user_id)
 );
 
+create table if not exists public.venture_documents (
+  id text not null,
+  user_id text not null,
+  venture_id text not null,
+  title text not null,
+  category text not null check (category in ('Customer Interview', 'PRD', 'Market Research', 'Meeting Notes', 'Specification')),
+  content text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (id, user_id)
+);
+
 -- Remove the old demo-only records if they were ever copied into production.
 delete from public.founder_learnings
 where id = 'lp-1'
@@ -63,20 +85,24 @@ where (id = 'm-1' and fact = 'Primary ICP: Solo founders and boutique software b
    or (id = 'm-2' and fact = 'Target pricing: $29/mo for Founder Pro tier with 20% annual discount.');
 
 create index if not exists founder_commitments_owner_venture_idx on public.founder_commitments (user_id, venture_id, created_at desc);
+create index if not exists founder_ventures_owner_idx on public.founder_ventures (user_id, updated_at desc);
 create index if not exists founder_learnings_owner_venture_idx on public.founder_learnings (user_id, venture_id, date_detected desc);
 create index if not exists venture_memories_owner_venture_idx on public.venture_memories (user_id, venture_id, created_at desc);
 create index if not exists ai_operation_logs_owner_venture_idx on public.ai_operation_logs (user_id, venture_id, created_at desc);
+create index if not exists venture_documents_owner_venture_idx on public.venture_documents (user_id, venture_id, updated_at desc);
 
 alter table public.founder_commitments enable row level security;
+alter table public.founder_ventures enable row level security;
 alter table public.founder_learnings enable row level security;
 alter table public.venture_memories enable row level security;
 alter table public.ai_operation_logs enable row level security;
+alter table public.venture_documents enable row level security;
 
 do $$
 declare
   table_name text;
 begin
-  foreach table_name in array array['founder_commitments', 'founder_learnings', 'venture_memories', 'ai_operation_logs']
+  foreach table_name in array array['founder_ventures', 'founder_commitments', 'founder_learnings', 'venture_memories', 'venture_documents', 'ai_operation_logs']
   loop
     execute format('drop policy if exists "owner can select" on public.%I', table_name);
     execute format('drop policy if exists "owner can insert" on public.%I', table_name);
