@@ -255,7 +255,15 @@ export class VoiceEngine {
         };
 
         this.recognition.onerror = (event: any) => {
-          if (event.error !== "no-speech") {
+          // "no-speech" and "aborted" are expected, high-frequency noise, not failures:
+          // speak() calls recognition.stop() on every single AI reply to stop the mic from
+          // hearing our own voice (echo prevention), and stopListening() calls abort()+stop()
+          // on every manual mute/end-call. The Web Speech API reliably reports both of those
+          // deliberate stops as an "aborted" error even though nothing actually went wrong, and
+          // onend (which drives the listen/restart loop) always still fires right after. Forward
+          // only genuinely actionable errors so the UI doesn't warn the user for expected churn.
+          const isExpected = event.error === "no-speech" || event.error === "aborted";
+          if (!isExpected) {
             console.warn("Speech recognition notice:", event.error);
             VoiceEngine.recognitionErrorCallback?.(event.error);
           }

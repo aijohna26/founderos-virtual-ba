@@ -21,9 +21,10 @@ import {
   Zap,
   X,
   Sparkles,
-  LogOut
+  LogOut,
+  CreditCard
 } from "lucide-react";
-import { SignOutButton, UserButton, useUser } from "@clerk/nextjs";
+import { SignOutButton, UserButton, useAuth, useUser } from "@clerk/nextjs";
 import { Venture } from "@/lib/store/ventureStore";
 import { SHOW_ADVANCED_FEATURES } from "@/lib/config/featureFlags";
 
@@ -57,6 +58,13 @@ export function Sidebar({
   onMobileClose,
 }: SidebarProps) {
   const { user } = useUser();
+  // `has` reflects the active session's real Clerk Billing plan claim -- it replaces a
+  // previously hardcoded "Solo Tier Active" label that never actually reflected what the
+  // signed-in user was subscribed to.
+  const { has } = useAuth();
+  const isVenturePro = has?.({ plan: "venture_pro" }) ?? false;
+  const isSoloFounder = !isVenturePro && (has?.({ plan: "solo_founder" }) ?? false);
+  const planLabel = isVenturePro ? "Venture Pro" : isSoloFounder ? "Solo Founder" : "Free plan";
   const currentVenture = ventures.find((v) => v.id === activeVentureId) || ventures[0];
 
   // Compute real sprint progress
@@ -253,9 +261,9 @@ export function Sidebar({
           </div>
         </div>
 
-        {/* Section 4: Pricing Upgrade CTA */}
+        {/* Section 4: Plan status + upgrade CTA, reflecting the real Clerk Billing plan */}
         <Link
-          href="/pricing"
+          href={isVenturePro ? "/account" : "/pricing"}
           onClick={() => onMobileClose?.()}
           className="p-3 rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-50/60 border border-blue-200/80 flex items-center justify-between group hover:border-blue-300 transition-all block"
         >
@@ -265,14 +273,18 @@ export function Sidebar({
             </div>
             <div>
               <div className="text-xs font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
-                7-Day Trial
+                {planLabel}
               </div>
-              <div className="text-[10px] text-slate-500 font-medium">Solo Tier Active</div>
+              <div className="text-[10px] text-slate-500 font-medium">
+                {isVenturePro ? "Manage billing" : "Current plan"}
+              </div>
             </div>
           </div>
-          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-600 text-white shadow-2xs uppercase">
-            Upgrade
-          </span>
+          {!isVenturePro && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-600 text-white shadow-2xs uppercase">
+              Upgrade
+            </span>
+          )}
         </Link>
       </div>
 
@@ -289,6 +301,15 @@ export function Sidebar({
             <Settings className="w-3.5 h-3.5 text-slate-400" />
             <span>Settings</span>
           </button>
+          <Link
+            href="/account"
+            onClick={() => onMobileClose?.()}
+            className="flex items-center gap-1.5 hover:text-slate-900 transition-colors cursor-pointer"
+            title="Manage your plan, payment method and invoices"
+          >
+            <CreditCard className="w-3.5 h-3.5 text-slate-400" />
+            <span>Billing</span>
+          </Link>
           <button
             onClick={() => {
               onOpenHelp?.();

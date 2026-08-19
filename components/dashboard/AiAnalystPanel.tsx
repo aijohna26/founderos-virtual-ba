@@ -44,6 +44,22 @@ import {
   type PendingTicketProposal,
 } from "@/lib/agent/ticketProposal";
 
+// Maps a genuine (non-"aborted"/"no-speech") SpeechRecognition error code to a message the
+// founder actually needs to see, since VoiceEngine only ever logged these to the console before.
+function describeMicError(code: string): string {
+  switch (code) {
+    case "not-allowed":
+    case "service-not-allowed":
+      return "Microphone access is blocked, so Sarah can't hear you. Allow mic permissions for this site and try again.";
+    case "audio-capture":
+      return "No microphone was found. Voice input is paused until one is connected.";
+    case "network":
+      return "Voice recognition lost its connection. Trying to reconnect…";
+    default:
+      return `Voice input hit a snag ("${code}") and paused. Toggle the mic to retry.`;
+  }
+}
+
 export interface AiAnalystPanelProps {
   isDailyCallActive: boolean;
   setIsDailyCallActive: (active: boolean) => void;
@@ -75,6 +91,7 @@ export function AiAnalystPanel({
   const [isTyping, setIsTyping] = useState(false);
   const [isSpeakingAI, setIsSpeakingAI] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
+  const [micWarning, setMicWarning] = useState<string | null>(null);
   const [showMemoryModal, setShowMemoryModal] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [showAdvisorPicker, setShowAdvisorPicker] = useState(false);
@@ -226,9 +243,15 @@ export function AiAnalystPanel({
       },
       (state) => {
         setVoiceState(state);
+        // Recognition made it back to "listening" or "speaking", so whatever previously
+        // interrupted it (permission prompt resolved, mic reconnected, network back) is over.
+        if (state === "listening" || state === "speaking") {
+          setMicWarning(null);
+        }
       },
       (err) => {
         console.warn("Voice Engine:", err);
+        setMicWarning(describeMicError(err));
       },
       () => {
         // Interrupted callback: User spoke over AI
@@ -990,6 +1013,21 @@ export function AiAnalystPanel({
             </button>
           )}
         </div>
+
+        {micWarning && (
+          <div className="mx-3 mb-2 flex items-start gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-left">
+            <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-amber-600" />
+            <p className="flex-1 text-[10px] font-semibold leading-snug text-amber-800">{micWarning}</p>
+            <button
+              type="button"
+              onClick={() => setMicWarning(null)}
+              className="shrink-0 text-amber-500 hover:text-amber-700"
+              title="Dismiss"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        )}
 
         {/* Audio / Voice Call Control Buttons */}
         <div className="flex items-center justify-center gap-3">

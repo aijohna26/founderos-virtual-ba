@@ -5,6 +5,12 @@ const isPublicRoute = createRouteMatcher([
   "/",
   "/sign-in(.*)",
   "/sign-up(.*)",
+  // Marketing/legal pages. /pricing in particular must stay public: <PricingTable />
+  // needs signed-out visitors to reach it and pick a plan before Clerk's own
+  // sign-up-then-checkout flow kicks in -- gating the page itself defeats that.
+  "/pricing",
+  "/privacy",
+  "/terms",
   // Recipients must be able to inspect a signed invitation before signing in.
   // The PATCH handler still authenticates and verifies the invited Clerk email.
   "/invite(.*)",
@@ -13,6 +19,9 @@ const isPublicRoute = createRouteMatcher([
   "/api/generate-venture-analysis(.*)",
   // This route performs its own Clerk auth so unsigned API callers receive JSON 401.
   "/api/persistence(.*)",
+  // Clerk billing webhooks are signed with CLERK_WEBHOOK_SIGNING_SECRET, not a session,
+  // so they must bypass auth.protect() here; the route itself calls verifyWebhook().
+  "/api/webhooks(.*)",
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
