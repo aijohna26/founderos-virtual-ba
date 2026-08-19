@@ -19,9 +19,18 @@ const isPublicRoute = createRouteMatcher([
   "/api/generate-venture-analysis(.*)",
   // This route performs its own Clerk auth so unsigned API callers receive JSON 401.
   "/api/persistence(.*)",
-  // Clerk billing webhooks are signed with CLERK_WEBHOOK_SIGNING_SECRET, not a session,
-  // so they must bypass auth.protect() here; the route itself calls verifyWebhook().
+  // Clerk billing webhooks are signed with CLERK_WEBHOOK_SIGNING_SECRET, and Stripe's LTD
+  // webhook with STRIPE_WEBHOOK_SECRET -- neither carries a session, so both must bypass
+  // auth.protect() here; each route verifies its own signature instead.
   "/api/webhooks(.*)",
+  // Public price/availability for the Lifetime Deal, read by signed-out visitors on
+  // /pricing. Read-only, no purchase data -- see app/api/ltd-offer/route.ts.
+  "/api/ltd-offer",
+  // /admin has its own, separate gate: a signed session cookie issued after checking
+  // ADMIN_USER/ADMIN_PASS from .env.local (see lib/admin/auth.ts), not a Clerk session --
+  // the page and every /api/admin/* route verify that cookie themselves.
+  "/admin(.*)",
+  "/api/admin(.*)",
 ]);
 
 export default clerkMiddleware(async (auth, req) => {

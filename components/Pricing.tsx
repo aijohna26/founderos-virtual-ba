@@ -4,6 +4,7 @@ import React from "react";
 import Link from "next/link";
 import { Sparkles } from "lucide-react";
 import { PricingTable } from "@clerk/nextjs";
+import { LtdOffer } from "@/components/LtdOffer";
 
 // Renders Clerk's own <PricingTable /> (real checkout, trial, upgrade/downgrade) instead of
 // a hand-maintained card grid, so plan names/prices/features here can never drift from what's
@@ -31,6 +32,22 @@ export function Pricing() {
           <p className="text-base sm:text-lg text-slate-300">
             Start with a free trial on any plan. Cancel anytime with zero friction.
           </p>
+        </div>
+
+        {/* One-time Lifetime Deal, above the recurring plans and visually distinct from them
+            (gold vs. the blue subscription cards) since it's a fundamentally different kind
+            of purchase -- capped, one-time, no billing cycle. Renders nothing if no LTD
+            offer is currently active, so this section just disappears between releases. */}
+        <LtdOffer />
+
+        {/* Divider bridging the one-time offer above to the recurring plans below, so the
+            two purchase paths don't read as a single confusing list. */}
+        <div className="flex items-center gap-4 max-w-md mx-auto my-12">
+          <div className="h-px flex-1 bg-slate-700/60" />
+          <span className="text-[11px] font-bold uppercase tracking-widest text-slate-500">
+            Or choose a plan
+          </span>
+          <div className="h-px flex-1 bg-slate-700/60" />
         </div>
 
         {/* Clerk-managed pricing + checkout. Selecting a plan while signed out prompts sign
