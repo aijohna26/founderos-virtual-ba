@@ -265,23 +265,23 @@ export function Sidebar({
         <Link
           href={isVenturePro ? "/account" : "/pricing"}
           onClick={() => onMobileClose?.()}
-          className="p-3 rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-50/60 border border-blue-200/80 flex items-center justify-between group hover:border-blue-300 transition-all block"
+          className="p-3 rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-50/60 border border-blue-200/80 flex items-center justify-between gap-2 group hover:border-blue-300 transition-all block"
         >
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-xs">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-6 h-6 rounded-lg bg-blue-600 text-white flex items-center justify-center shadow-xs shrink-0">
               <Zap className="w-3.5 h-3.5 fill-white" />
             </div>
-            <div>
-              <div className="text-xs font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
+            <div className="min-w-0">
+              <div className="text-xs font-bold text-slate-900 group-hover:text-blue-600 transition-colors truncate">
                 {planLabel}
               </div>
-              <div className="text-[10px] text-slate-500 font-medium">
+              <div className="text-[10px] text-slate-500 font-medium truncate">
                 {isVenturePro ? "Manage billing" : "Current plan"}
               </div>
             </div>
           </div>
           {!isVenturePro && (
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-600 text-white shadow-2xs uppercase">
+            <span className="shrink-0 whitespace-nowrap text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-600 text-white shadow-2xs uppercase">
               Upgrade
             </span>
           )}
