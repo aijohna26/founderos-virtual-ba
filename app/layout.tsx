@@ -23,7 +23,12 @@ export const metadata: Metadata = {
     description: "Real 2-way voice conversations with Gemini AI on business strategy and board execution.",
   },
   icons: {
-    icon: "/favicon.ico",
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/favicon.ico", sizes: "any" }
+    ],
+    shortcut: "/favicon.svg",
+    apple: "/favicon.svg",
   },
 };
 

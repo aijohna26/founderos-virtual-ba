@@ -284,24 +284,24 @@ export function Sidebar({
 
       {/* Bottom Profile & Settings Area */}
       <div className="p-4 border-t border-slate-200/80 space-y-2 bg-slate-50/50">
-        <div className="flex items-center justify-between px-2 text-xs font-medium text-slate-600">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-2 text-xs font-medium text-slate-600">
           <button
             onClick={() => {
               onOpenSettings?.();
               onMobileClose?.();
             }}
-            className="flex items-center gap-1.5 hover:text-slate-900 transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 whitespace-nowrap hover:text-slate-900 transition-colors cursor-pointer"
           >
-            <Settings className="w-3.5 h-3.5 text-slate-400" />
+            <Settings className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             <span>Settings</span>
           </button>
           <Link
             href="/account"
             onClick={() => onMobileClose?.()}
-            className="flex items-center gap-1.5 hover:text-slate-900 transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 whitespace-nowrap hover:text-slate-900 transition-colors cursor-pointer"
             title="Manage your plan, payment method and invoices"
           >
-            <CreditCard className="w-3.5 h-3.5 text-slate-400" />
+            <CreditCard className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             <span>Billing</span>
           </Link>
           <button
@@ -309,10 +309,10 @@ export function Sidebar({
               onOpenHelp?.();
               onMobileClose?.();
             }}
-            className="flex items-center gap-1.5 hover:text-slate-900 transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 whitespace-nowrap hover:text-slate-900 transition-colors cursor-pointer"
           >
-            <HelpCircle className="w-3.5 h-3.5 text-slate-400" />
-            <span>Help & Support</span>
+            <HelpCircle className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span>Help &amp; Support</span>
           </button>
         </div>
 

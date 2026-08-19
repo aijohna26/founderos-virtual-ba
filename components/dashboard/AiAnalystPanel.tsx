@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { Venture, VentureStore, ChatMessage } from "@/lib/store/ventureStore";
 import { VoiceEngine, VoiceState } from "@/lib/voice/voiceEngine";
+import { GeminiLiveService, type LiveSessionState } from "@/lib/agent/geminiLiveService";
 import { MemoryService, MemoryFact } from "@/lib/db/memoryService";
 import { BAAgentService, type ToolExecutionResult } from "@/lib/agent/baAgentService";
 import { DocumentStore } from "@/lib/store/documentStore";
@@ -92,6 +93,12 @@ export function AiAnalystPanel({
   const [isSpeakingAI, setIsSpeakingAI] = useState(false);
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [micWarning, setMicWarning] = useState<string | null>(null);
+  const [isConnectingCall, setIsConnectingCall] = useState(false);
+  // Mirrors liveClientRef.current being a connected session, kept as state (not a direct ref
+  // read) specifically so it's safe to use in JSX -- reading ref.current during render can
+  // silently desync from what's on screen.
+  const [isLiveCallConnected, setIsLiveCallConnected] = useState(false);
+  const [liveToolNotice, setLiveToolNotice] = useState<string | null>(null);
   const [showMemoryModal, setShowMemoryModal] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [showAdvisorPicker, setShowAdvisorPicker] = useState(false);
@@ -105,6 +112,15 @@ export function AiAnalystPanel({
   const componentActiveRef = useRef(true);
   const isTypingRef = useRef(isTyping);
   const submitMessageRef = useRef<(text: string) => void>(() => {});
+  const liveClientRef = useRef<GeminiLiveService | null>(null);
+  // GeminiLiveService callbacks are bound once per call and outlive individual renders, so
+  // they need a way to read the *current* venture (not the one closed over when the call
+  // started) to append chat messages onto the latest history instead of a stale snapshot.
+  const ventureRef = useRef(venture);
+  useEffect(() => {
+    ventureRef.current = venture;
+  }, [venture]);
+  const liveAiBufferRef = useRef("");
 
   const messages = venture?.chatHistory || [
     {
@@ -272,18 +288,21 @@ export function AiAnalystPanel({
     chatBottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isTyping]);
 
-  // Manage mic listening during Daily Call
+  // Daily Call's microphone is owned entirely by GeminiLiveService now (it captures raw
+  // audio itself once connected) -- the old Web Speech recognition path must stay off during
+  // a call, or both would transcribe the same input and could double-fire submitMessage.
   useEffect(() => {
-    if (voiceControlsManagedExternally) {
-      VoiceEngine.stopListening();
-      return;
-    }
-    if (isDailyCallActive && !micMuted) {
-      VoiceEngine.startListening();
-    } else {
-      VoiceEngine.stopListening();
-    }
-  }, [isDailyCallActive, micMuted, voiceControlsManagedExternally]);
+    VoiceEngine.stopListening();
+  }, [voiceControlsManagedExternally]);
+
+  // Disconnect the live session on unmount (venture switch, panel closing) so a call never
+  // keeps streaming audio after the component that owns it is gone.
+  useEffect(() => {
+    return () => {
+      liveClientRef.current?.disconnect();
+      liveClientRef.current = null;
+    };
+  }, []);
 
   // Call timer effect
   useEffect(() => {
@@ -368,6 +387,26 @@ export function AiAnalystPanel({
     setPendingTicketProposal(null);
   };
 
+  // Appends one message to chat history using the *current* venture (via ventureRef, not the
+  // possibly-stale `venture` prop closed over when the live call started) so successive
+  // transcript events during one call build on each other instead of clobbering history.
+  const appendChatMessage = (sender: "user" | "ai", text: string) => {
+    if (!text.trim()) return;
+    const msg: ChatMessage = {
+      id: `${sender}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      sender,
+      text: text.trim(),
+      timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+    };
+    const updated: Venture = {
+      ...ventureRef.current,
+      chatHistory: [...(ventureRef.current.chatHistory || []), msg],
+    };
+    ventureRef.current = updated;
+    VentureStore.updateVenture(updated);
+    onUpdateVenture(updated);
+  };
+
   const submitMessage = async (userText: string) => {
     if (!userText.trim() || isTyping) return;
     if (pendingTicketProposal && isProposalConfirmation(userText)) {
@@ -378,6 +417,15 @@ export function AiAnalystPanel({
     if (pendingTicketProposal && isProposalCancellation(userText)) {
       setInputVal("");
       cancelPendingTicketProposal(userText);
+      return;
+    }
+    // A Daily Call is live -- send typed text into that same session instead of the
+    // text-then-separately-fetch-audio /api/ai-analyst path. Live won't transcribe typed
+    // input itself (there's no audio to run ASR on), so the user bubble is added here.
+    if (liveClientRef.current?.isActive()) {
+      setInputVal("");
+      appendChatMessage("user", userText);
+      liveClientRef.current.sendText(userText);
       return;
     }
     if (silenceTimerRef.current) {
@@ -449,6 +497,16 @@ export function AiAnalystPanel({
       const aiReplyText =
         data.reply ||
         `I've analyzed your input for ${venture.name}. Let's prioritize validating your core hypothesis.`;
+
+      // The assistant resolved a specific ticket this turn (e.g. "open the login bug card")
+      // -- actually open it instead of leaving the reply text as the only evidence anything
+      // happened. BoardTab (or the dashboard shell, if Board isn't the active tab) listens
+      // for this.
+      if (typeof data.openTicketId === "string" && data.openTicketId) {
+        window.dispatchEvent(new CustomEvent("founderally:open-card", {
+          detail: { ventureId: venture.id, ticketId: data.openTicketId },
+        }));
+      }
 
       let currentVenture: Venture = { ...venture };
       const toolResults: ToolExecutionResult[] = [];
@@ -568,43 +626,108 @@ export function AiAnalystPanel({
     if (voiceControlsManagedExternally) return;
     const nextMuted = !micMuted;
     setMicMuted(nextMuted);
-    if (nextMuted) {
+    if (liveClientRef.current) {
+      liveClientRef.current.setMuted(nextMuted);
+    } else if (nextMuted) {
       VoiceEngine.stopListening();
       setVoiceState("idle");
-    } else {
-      if (isDailyCallActive) {
-        VoiceEngine.startListening();
-      }
     }
   };
 
-  const toggleCall = () => {
-    if (voiceControlsManagedExternally) return;
-    const nextCall = !isDailyCallActive;
-    setIsDailyCallActive(nextCall);
+  const speakFallbackGreeting = () => {
+    const lastAiMsg = [...messages].reverse().find((m) => m.sender === "ai");
+    const greeting =
+      lastAiMsg?.text ||
+      `Good day Founder! I'm your AI Business Analyst. I've loaded your venture context for ${venture.name}. What's the biggest uncertainty we should stress-test today?`;
+    VoiceEngine.speak(
+      greeting,
+      advisor.voiceName,
+      () => setIsSpeakingAI(true),
+      () => setIsSpeakingAI(false)
+    );
+  };
 
-    if (!nextCall) {
+  const toggleCall = async () => {
+    if (voiceControlsManagedExternally) return;
+
+    if (isDailyCallActive) {
+      liveClientRef.current?.disconnect();
+      liveClientRef.current = null;
+      liveAiBufferRef.current = "";
       VoiceEngine.stopSpeaking();
       VoiceEngine.stopListening();
+      setIsDailyCallActive(false);
       setIsSpeakingAI(false);
       setVoiceState("idle");
-    } else {
-      // Unlock audio and ensure voice is active
-      setVoiceAudioEnabled(true);
-      VoiceEngine.unlockAudio();
-
-      const lastAiMsg = [...messages].reverse().find((m) => m.sender === "ai");
-      const greeting =
-        lastAiMsg?.text ||
-        `Good day Founder! I'm your AI Business Analyst. I've loaded your venture context for ${venture.name}. What's the biggest uncertainty we should stress-test today?`;
-
-      VoiceEngine.speak(
-        greeting,
-        advisor.voiceName,
-        () => setIsSpeakingAI(true),
-        () => setIsSpeakingAI(false)
-      );
+      setIsConnectingCall(false);
+      setIsLiveCallConnected(false);
+      setLiveToolNotice(null);
+      return;
     }
+
+    setVoiceAudioEnabled(true);
+    VoiceEngine.unlockAudio();
+    setIsDailyCallActive(true);
+    setIsConnectingCall(true);
+
+    // Daily Call now runs on the same real-time Gemini Live session Standup uses, instead of
+    // the old "get a text reply, then fetch a whole TTS clip for it" pipeline -- audio streams
+    // as Sarah composes it, and barge-in is Gemini's own server-side voice activity detection
+    // rather than the browser SpeechRecognition heuristic.
+    const client = new GeminiLiveService(
+      ventureRef.current,
+      {
+        onStateChange: (state: LiveSessionState) => {
+          setIsConnectingCall(state === "connecting");
+          setIsLiveCallConnected(state !== "connecting" && state !== "disconnected" && state !== "error");
+          setIsSpeakingAI(state === "speaking");
+          if (state === "thinking" || state === "using_tool") setVoiceState("thinking");
+          else if (state === "listening") setVoiceState("listening");
+          else if (state === "speaking") setVoiceState("speaking");
+          else setVoiceState("idle");
+        },
+        onTranscript: (sender, text, isFinal) => {
+          if (sender === "user") {
+            if (isFinal) appendChatMessage("user", text);
+            return;
+          }
+          // AI transcript streams in as incremental chunks, then a final ("", true)
+          // turnComplete signal -- buffer chunks and commit the whole reply as one message,
+          // matching how a normal chat reply looks in history.
+          if (isFinal) {
+            if (liveAiBufferRef.current.trim()) appendChatMessage("ai", liveAiBufferRef.current);
+            liveAiBufferRef.current = "";
+          } else if (text) {
+            liveAiBufferRef.current += text;
+          }
+        },
+        onToolExecuting: (toolName) => {
+          setLiveToolNotice(`${advisor.name} is executing: ${toolName}...`);
+        },
+        onToolExecuted: () => {
+          setLiveToolNotice(null);
+        },
+        onVentureUpdated: (updatedVenture) => {
+          ventureRef.current = updatedVenture;
+          onUpdateVenture(updatedVenture);
+        },
+        onError: (err) => {
+          console.warn("Gemini Live notice:", err);
+          liveClientRef.current?.disconnect();
+          liveClientRef.current = null;
+          setIsConnectingCall(false);
+          setIsLiveCallConnected(false);
+          setLiveToolNotice(null);
+          setMicWarning("Live voice hit a snag, so this call is using the standard voice fallback instead.");
+          speakFallbackGreeting();
+        },
+      },
+      advisor,
+      `Start our conversation now with the most useful thing to raise first for ${ventureRef.current.name}, given the current sprint context.`
+    );
+
+    liveClientRef.current = client;
+    await client.connect();
   };
 
   const clearChat = () => {
@@ -989,10 +1112,14 @@ export function AiAnalystPanel({
         {/* Call Status & Standup Schedule */}
         <div className="text-center mt-1 mb-2">
           <p className="text-[11px] font-bold text-slate-800">
-            {isSpeakingAI
+            {isConnectingCall
+              ? "Connecting..."
+              : isSpeakingAI
               ? "🔊 AI BA Speaking..."
               : isDailyCallActive
-              ? voiceState === "listening"
+              ? voiceState === "thinking"
+                ? "Thinking..."
+                : voiceState === "listening"
                 ? "Listening to mic..."
                 : "Daily Call Active"
               : "Daily Call Standby"}
@@ -1013,6 +1140,13 @@ export function AiAnalystPanel({
             </button>
           )}
         </div>
+
+        {liveToolNotice && (
+          <div className="mx-3 mb-2 flex items-center justify-center gap-1.5 rounded-xl bg-blue-950/80 border border-blue-700 px-2.5 py-1.5 text-[10px] font-semibold text-blue-200 animate-pulse">
+            <Database className="h-3 w-3 shrink-0 text-blue-400" />
+            <span>{liveToolNotice}</span>
+          </div>
+        )}
 
         {micWarning && (
           <div className="mx-3 mb-2 flex items-start gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-left">
@@ -1065,43 +1199,52 @@ export function AiAnalystPanel({
             )}
           </button>
 
-          {/* Direct Speak / Play Voice / Interrupt button */}
-          <button
-            onClick={() => {
-              if (isSpeakingAI) {
-                VoiceEngine.stopSpeaking();
-                setIsSpeakingAI(false);
-                setVoiceState("listening");
-                return;
-              }
-              VoiceEngine.unlockAudio();
-              setVoiceAudioEnabled(true);
-              const lastAiMsg = [...messages].reverse().find((m) => m.sender === "ai");
-              if (lastAiMsg) {
-                VoiceEngine.speak(
-                  lastAiMsg.text,
-                  advisor.voiceName,
-                  () => setIsSpeakingAI(true),
-                  () => setIsSpeakingAI(false)
-                );
-              }
-            }}
-            className={`p-2.5 rounded-full transition-all cursor-pointer ${
-              isSpeakingAI
-                ? "bg-rose-600 hover:bg-rose-700 text-white ring-2 ring-rose-300 animate-pulse"
-                : "bg-slate-100 text-slate-700 hover:bg-slate-200"
-            }`}
-            title={isSpeakingAI ? "Click to interrupt the advisor" : "Speak latest message aloud"}
-          >
-            {isSpeakingAI ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-          </button>
+          {/* Interrupt (while speaking) / Replay last message (outside a live call) button.
+              Replay is hidden mid-call: it would play through the old TTS path while
+              GeminiLiveService's own mic is capturing input, risking Gemini mistaking the
+              replay for new user speech. */}
+          {(isSpeakingAI || !isLiveCallConnected) && (
+            <button
+              onClick={() => {
+                if (isSpeakingAI) {
+                  if (liveClientRef.current?.isActive()) {
+                    liveClientRef.current.interrupt();
+                  } else {
+                    VoiceEngine.stopSpeaking();
+                  }
+                  setIsSpeakingAI(false);
+                  setVoiceState("listening");
+                  return;
+                }
+                VoiceEngine.unlockAudio();
+                setVoiceAudioEnabled(true);
+                const lastAiMsg = [...messages].reverse().find((m) => m.sender === "ai");
+                if (lastAiMsg) {
+                  VoiceEngine.speak(
+                    lastAiMsg.text,
+                    advisor.voiceName,
+                    () => setIsSpeakingAI(true),
+                    () => setIsSpeakingAI(false)
+                  );
+                }
+              }}
+              className={`p-2.5 rounded-full transition-all cursor-pointer ${
+                isSpeakingAI
+                  ? "bg-rose-600 hover:bg-rose-700 text-white ring-2 ring-rose-300 animate-pulse"
+                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+              }`}
+              title={isSpeakingAI ? "Click to interrupt the advisor" : "Speak latest message aloud"}
+            >
+              {isSpeakingAI ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+            </button>
+          )}
         </div>
 
         {/* Morning Standup Quick Action */}
         <div className="w-full mt-2 pt-2 border-t border-slate-100/80 flex items-center justify-center">
           <button
-            onClick={() => {
-              if (!isDailyCallActive) setIsDailyCallActive(true);
+            onClick={async () => {
+              if (!isDailyCallActive) await toggleCall();
               submitMessage(
                 `Let's do our daily morning standup review for ${venture.name}. Walk me through our active cards on the board, any blocked tasks, and our #1 priority for today.`
               );

@@ -70,7 +70,10 @@ export class GeminiLiveService {
   constructor(
     venture: Venture,
     callbacks: GeminiLiveServiceCallbacks,
-    advisor: AdvisorPersona = DEFAULT_ADVISOR
+    advisor: AdvisorPersona = DEFAULT_ADVISOR,
+    // Overridable so callers other than the stand-up ceremony (e.g. the general Daily Call
+    // panel) aren't forced into stand-up-flavored opening phrasing.
+    private readonly initialPrompt: string = "Start the stand-up now with the single most important observation from the supplied sprint context."
   ) {
     this.venture = venture;
     this.callbacks = callbacks;
@@ -197,9 +200,7 @@ export class GeminiLiveService {
         success: true,
       });
 
-      this.session.sendRealtimeInput({
-        text: "Start the stand-up now with the single most important observation from the supplied sprint context.",
-      });
+      this.session.sendRealtimeInput({ text: this.initialPrompt });
       return true;
     } catch (error) {
       if (
@@ -411,6 +412,21 @@ export class GeminiLiveService {
   interrupt(): void {
     this.stopPlayback();
     this.callbacks.onStateChange("listening");
+  }
+
+  /**
+   * Sends a typed message into this live session, same conversation as spoken input. Note
+   * this does not itself produce an onTranscript("user", ...) callback -- there's no audio
+   * for Gemini to transcribe, so the caller is responsible for reflecting the typed text in
+   * its own UI/history before calling this.
+   */
+  sendText(text: string): void {
+    if (!this.session || !this.isConnected || !text.trim()) return;
+    this.session.sendRealtimeInput({ text: text.trim() });
+  }
+
+  isActive(): boolean {
+    return this.isConnected;
   }
 
   setMuted(muted: boolean): void {

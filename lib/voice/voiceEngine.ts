@@ -217,9 +217,12 @@ export class VoiceEngine {
         };
 
         this.recognition.onresult = (event: any) => {
-          // Drop mic input during AI speech or right after speech to prevent acoustic loops
           const now = Date.now();
-          if (VoiceEngine.isSpeaking || (now - VoiceEngine.lastSpokenEndTime < 450)) {
+          // Only drop the ~450ms tail right after Sarah finishes speaking -- the speaker's
+          // audio is still decaying acoustically and the mic can pick up its own echo. While
+          // she's actively speaking, recognition stays live (see speak(), which no longer
+          // stops it) specifically so a real interruption can be detected below.
+          if (!VoiceEngine.isSpeaking && now - VoiceEngine.lastSpokenEndTime < 450) {
             return;
           }
 
@@ -237,7 +240,8 @@ export class VoiceEngine {
           const rawHeard = (finalTranscript || interimTranscript).trim().toLowerCase();
           if (!rawHeard || rawHeard.length < 2) return;
 
-          // Phrase bleed filter
+          // Phrase bleed filter: ignore anything that's plausibly Sarah's own voice leaking
+          // back into the mic rather than the user actually talking.
           const isRecentEcho = VoiceEngine.recentlySpokenSentences.some((recent) => {
             const cleanRecent = recent.toLowerCase();
             return cleanRecent.includes(rawHeard) || rawHeard === "got it" || rawHeard === "got it.";
@@ -245,6 +249,16 @@ export class VoiceEngine {
 
           if (isRecentEcho && rawHeard.split(" ").length < 4) {
             return;
+          }
+
+          if (VoiceEngine.isSpeaking) {
+            // Barge-in. Require a *final* result with a few words before acting on it --
+            // interim fragments and one-word blips are far more likely to be acoustic noise
+            // than a deliberate interruption, and without hardware echo cancellation this is
+            // the only guard against Sarah's own voice triggering a false interrupt.
+            if (finalTranscript.trim().split(/\s+/).filter(Boolean).length < 3) return;
+            VoiceEngine.stopSpeaking();
+            VoiceEngine.onInterruptCallback?.();
           }
 
           if (finalTranscript.trim().length > 0) {
@@ -271,20 +285,21 @@ export class VoiceEngine {
 
         this.recognition.onend = () => {
           this.isListening = false;
-          // Continuous listening loop
-          if (this.shouldBeListening && !this.isSpeaking) {
+          // Continuous listening loop. No longer gated on !isSpeaking -- recognition is
+          // meant to keep running through Sarah's speech now (that's what makes barge-in
+          // possible), so if the session ends for any reason mid-speech it should still
+          // come back instead of leaving the mic dead until she finishes.
+          if (this.shouldBeListening) {
             setTimeout(() => {
-              if (this.shouldBeListening && !this.isSpeaking && !this.isListening) {
+              if (this.shouldBeListening && !this.isListening) {
                 try {
                   this.recognition.start();
                   this.isListening = true;
                 } catch (e) {}
               }
             }, 150);
-          } else {
-            if (!this.isSpeaking && this.stateChangeCallback) {
-              this.stateChangeCallback("idle");
-            }
+          } else if (!this.isSpeaking && this.stateChangeCallback) {
+            this.stateChangeCallback("idle");
           }
         };
       }
@@ -295,10 +310,11 @@ export class VoiceEngine {
     }
   }
 
-  // Start listening to microphone
+  // Start listening to microphone. Not gated on !isSpeaking -- recognition is meant to run
+  // through Sarah's speech too so barge-in can be detected (see onresult/speak()).
   static startListening(): void {
     this.shouldBeListening = true;
-    if (this.recognition && !this.isListening && !this.isSpeaking) {
+    if (this.recognition && !this.isListening) {
       try {
         this.recognition.start();
         this.isListening = true;
@@ -376,12 +392,10 @@ export class VoiceEngine {
       this.recentlySpokenSentences.shift();
     }
 
-    if (this.recognition) {
-      try {
-        this.recognition.stop();
-      } catch (e) {}
-      this.isListening = false;
-    }
+    // Recognition deliberately stays running through Sarah's speech (not stopped here
+    // anymore) -- onresult applies a stricter echo/length filter while isSpeaking is true so
+    // a real interruption can still be detected and barge in, instead of the mic going
+    // completely deaf until she finishes talking.
 
     // 1. Server-side Google Gemini neural voice audio.
     try {

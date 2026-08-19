@@ -47,6 +47,11 @@ export default function DashboardPage() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState<boolean>(false);
   const [mobileAiPanelOpen, setMobileAiPanelOpen] = useState<boolean>(false);
   const [mounted, setMounted] = useState<boolean>(false);
+  // Set when Sarah resolves a specific ticket in chat (see AiAnalystPanel's
+  // "founderally:open-card" dispatch) and consumed by BoardTab once it opens the card.
+  // Lives here rather than inside BoardTab because BoardTab unmounts on every other tab --
+  // without lifting this, a card reference while on Standup/Today would have nothing to open.
+  const [pendingOpenCardId, setPendingOpenCardId] = useState<string | null>(null);
 
   useEffect(() => {
     const loaded = VentureStore.getVentures();
@@ -89,6 +94,17 @@ export default function DashboardPage() {
     ventures.find((v) => v.id === activeVentureId) ||
     ventures[0] ||
     VentureStore.getVentures()[0];
+
+  useEffect(() => {
+    const handleOpenCard = (event: Event) => {
+      const detail = (event as CustomEvent<{ ventureId?: string; ticketId?: string }>).detail;
+      if (!detail?.ticketId || detail.ventureId !== activeVenture?.id) return;
+      setActiveTab("Board");
+      setPendingOpenCardId(detail.ticketId);
+    };
+    window.addEventListener("founderally:open-card", handleOpenCard);
+    return () => window.removeEventListener("founderally:open-card", handleOpenCard);
+  }, [activeVenture?.id]);
 
   useEffect(() => {
     if (!mounted || !isAuthLoaded || !activeVenture?.id) return;
@@ -191,6 +207,8 @@ export default function DashboardPage() {
             <BoardTab
               venture={activeVenture}
               onUpdateVenture={handleUpdateVenture}
+              pendingOpenCardId={pendingOpenCardId}
+              onPendingCardOpened={() => setPendingOpenCardId(null)}
             />
           )}
           {effectiveTab === "Standup" && (

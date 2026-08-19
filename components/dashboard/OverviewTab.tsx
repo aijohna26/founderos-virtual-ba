@@ -389,12 +389,12 @@ export function OverviewTab({ venture, onUpdateVenture, setActiveTab }: Overview
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2 items-center">
           {/* Status Donut Gauge */}
-          <div className="flex items-center gap-4 p-4 rounded-2xl bg-slate-50/60 border border-slate-200/70">
-            <div className="relative w-24 h-24 flex items-center justify-center shrink-0">
+          <div className="flex items-center gap-5 p-4 rounded-2xl bg-slate-50/60 border border-slate-200/70">
+            <div className="relative w-28 h-28 flex items-center justify-center shrink-0">
               <svg className="w-full h-full -rotate-90" viewBox="0 0 36 36">
                 <path
                   className="text-slate-200"
-                  strokeWidth="3.8"
+                  strokeWidth="3"
                   stroke="currentColor"
                   fill="none"
                   d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
@@ -402,31 +402,41 @@ export function OverviewTab({ venture, onUpdateVenture, setActiveTab }: Overview
                 <path
                   className={isAtRisk ? "text-orange-500" : "text-emerald-500"}
                   strokeDasharray={`${Math.max(25, 100 - highRisks.length * 20)}, 100`}
-                  strokeWidth="3.8"
+                  strokeWidth="3"
                   strokeLinecap="round"
                   stroke="currentColor"
                   fill="none"
                   d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
                 />
               </svg>
-              <div className="absolute flex flex-col items-center justify-center text-center">
-                <span className="text-[11px] font-bold text-slate-900">{healthStatus}</span>
-                <span className="text-[9px] text-slate-400">Live Status</span>
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center px-4">
+                <span className="text-[11px] font-bold text-slate-900 leading-tight">{healthStatus}</span>
+                <span className="mt-1 text-[9px] font-semibold uppercase tracking-wide text-slate-400">
+                  Live Status
+                </span>
               </div>
             </div>
 
-            <div className="space-y-1.5 text-xs text-slate-600">
+            <div className="space-y-2 text-xs text-slate-600">
               <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-rose-500" />
-                <span>{highRisks.length} high risks</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 shrink-0" />
+                <span>
+                  <span className="font-bold text-slate-900">{highRisks.length}</span> high risk
+                  {highRisks.length === 1 ? "" : "s"}
+                </span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                <span>{supportedCount} validated</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
+                <span>
+                  <span className="font-bold text-slate-900">{supportedCount}</span> validated
+                </span>
               </div>
               <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-slate-400" />
-                <span>{blockedCount} blockers</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-slate-400 shrink-0" />
+                <span>
+                  <span className="font-bold text-slate-900">{blockedCount}</span> blocker
+                  {blockedCount === 1 ? "" : "s"}
+                </span>
               </div>
             </div>
           </div>

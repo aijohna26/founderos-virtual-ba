@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+
+    <!-- Primary Electric Blue/Indigo Gradient -->
+    <linearGradient id="primaryGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#2563eb" />
+      <stop offset="100%" stop-color="#4f46e5" />
+    </linearGradient>
+
+    <!-- Glowing Accent Gradient -->
+    <linearGradient id="accentGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#06b6d4" />
+      <stop offset="100%" stop-color="#10b981" />
+    </linearGradient>
+
+    <!-- Subtle Drop Shadow -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#2563eb" flood-opacity="0.45" />
+    </filter>
+  </defs>
+
+  <!-- Rounded Squircle Canvas -->
+  <rect width="512" height="512" rx="128" fill="url(#bgGrad)" />
+  <rect width="504" height="504" x="4" y="4" rx="124" fill="none" stroke="#1e293b" stroke-width="4" opacity="0.6" />
+
+  <!-- Geometric FounderAlly "FA" & Growth Wing Mark -->
+  <g filter="url(#glow)">
+    <!-- Left Ascending Pillar (The "F" & Founder's Foundation) -->
+    <path
+      d="M 148 380 L 148 132 C 148 120.95 156.95 112 168 112 L 272 112 C 283.05 112 292 120.95 292 132 C 292 143.05 283.05 152 272 152 L 188 152 L 188 224 L 254 224 C 265.05 224 274 232.95 274 244 C 274 255.05 265.05 264 254 264 L 188 264 L 188 380 C 188 391.05 179.05 400 168 400 C 156.95 400 148 391.05 148 380 Z"
+      fill="url(#primaryGrad)"
+    />
+
+    <!-- Right Dynamic Ascent Beam (The "Ally" & AI Co-Pilot Wing) -->
+    <path
+      d="M 284 394 C 276.5 402 264 398 264 386 L 264 296 C 264 286 270 278 279 275 L 364 244 C 378 239 392 250 392 265 L 392 376 C 392 388 381 398 369 398 L 302 398 Z"
+      fill="url(#primaryGrad)"
+      opacity="0.9"
+    />
+
+    <!-- AI Intelligence Spark Core -->
+    <polygon
+      points="340,112 352,142 382,154 352,166 340,196 328,166 298,154 328,142"
+      fill="url(#accentGrad)"
+    />
+    <circle cx="340" cy="154" r="6" fill="#ffffff" />
+  </g>
+</svg>

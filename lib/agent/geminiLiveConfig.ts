@@ -52,6 +52,10 @@ export const GEMINI_LIVE_TOOLS: FunctionDeclaration[] = [
           description: "Specific independently testable acceptance criteria.",
         },
         assigneeIds: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Stable venture member IDs responsible for the ticket." },
+        blockedReason: {
+          type: Type.STRING,
+          description: "Required when column is 'blocked': why this ticket can't proceed right now.",
+        },
       },
       required: ["title"],
     },
@@ -84,6 +88,10 @@ export const GEMINI_LIVE_TOOLS: FunctionDeclaration[] = [
         assigneeIds: { type: Type.ARRAY, items: { type: Type.STRING }, description: "Complete replacement list of assigned venture member IDs." },
         dueDate: { type: Type.STRING, description: "Due date as YYYY-MM-DD, or an empty string to clear it." },
         linkedAssumptionId: { type: Type.STRING, description: "Stable venture assumption ID, or an empty string to unlink it." },
+        blockedReason: {
+          type: Type.STRING,
+          description: "Only applied while the ticket is in the Blocked column: why it's blocked, or an empty string to clear it.",
+        },
       },
     },
   },
@@ -96,6 +104,10 @@ export const GEMINI_LIVE_TOOLS: FunctionDeclaration[] = [
         ticketId: { type: Type.STRING },
         cardTitle: { type: Type.STRING },
         toColumn: { type: Type.STRING, enum: ["backlog", "today", "in_progress", "done", "blocked"] },
+        blockedReason: {
+          type: Type.STRING,
+          description: "Required when toColumn is 'blocked': why this ticket can't proceed right now. Ask if it isn't already clear from the conversation.",
+        },
       },
       required: ["toColumn"],
     },
@@ -134,7 +146,10 @@ function summarizeCards(venture: Venture, column: keyof Venture["columns"]): str
     ? cards.map((card) => {
         const ageDays = column === "in_progress" ? getInProgressAgeDays(card) : null;
         const age = formatInProgressAge(ageDays);
-        return `${card.id}: ${card.title} (${card.priority || "Unprioritized"}, assigned to ${formatAssigneesForAdvisor(venture, card)}${age ? `, in progress ${card.inProgressSinceInferred ? "approximately " : ""}${age.toLowerCase()}` : ""})`;
+        const blockedNote = column === "blocked"
+          ? `, ${card.blockedReason ? `blocked: ${card.blockedReason}` : "no blocked reason recorded yet"}`
+          : "";
+        return `${card.id}: ${card.title} (${card.priority || "Unprioritized"}, assigned to ${formatAssigneesForAdvisor(venture, card)}${age ? `, in progress ${card.inProgressSinceInferred ? "approximately " : ""}${age.toLowerCase()}` : ""}${blockedNote})`;
       }).join("; ")
     : "None";
 }
@@ -175,7 +190,7 @@ export function buildGeminiLiveConfig(context: GeminiLiveContext): LiveConnectCo
       parts: [{
         text: `You are ${advisor.name}, ${advisor.title}, working with a solo founder during a live stand-up. Your coaching mode is ${advisor.style}. ${advisor.voiceDirection}
 
-Your job is to keep the sprint focused, identify blockers, challenge work that does not support the sprint goal, create clear tickets, and hold the team accountable to explicit commitments. Address present participants by name when a ticket, blocker, or dependency is assigned to them; do not assume every speaker is the venture owner. Use the activity history to compare what changed since the previous stand-up; do not ask what the team is working on when the board already tells you. Observe, compare, then either ask one evidence-based question or make a concrete recommendation. Prefer a recommendation when the evidence is sufficient, and offer to execute the board change with a tool. Treat an in-progress ticket aged 3 or more days as a stand-up talking point: ask whether it is blocked, oversized, or ready to finish. If its age is marked approximate, say so. When someone wants to discuss a ticket, call get_ticket so you can reason over its full description and acceptance criteria. Work through criteria collaboratively: identify gaps and propose precise, testable wording. Before calling update_ticket or move_ticket, describe the exact change and ask for an explicit yes/no confirmation. Only call the mutation tool after the human confirms. You can update title, description, criteria, assignees, category, priority, due date, linked assumption, and column. Be conversational and concise: normally one to three spoken sentences. Distinguish facts from assumptions. Never say an action is complete until its tool result confirms success. After a successful tool result, acknowledge it naturally and ask the next useful question. After a failed result, explain the failure and ask for the information needed to recover.
+Your job is to keep the sprint focused, identify blockers, challenge work that does not support the sprint goal, create clear tickets, and hold the team accountable to explicit commitments. Address present participants by name when a ticket, blocker, or dependency is assigned to them; do not assume every speaker is the venture owner. Use the activity history to compare what changed since the previous stand-up; do not ask what the team is working on when the board already tells you. Observe, compare, then either ask one evidence-based question or make a concrete recommendation. Prefer a recommendation when the evidence is sufficient, and offer to execute the board change with a tool. Treat an in-progress ticket aged 3 or more days as a stand-up talking point: ask whether it is blocked, oversized, or ready to finish. If its age is marked approximate, say so. When someone wants to discuss a ticket, call get_ticket so you can reason over its full description and acceptance criteria. Work through criteria collaboratively: identify gaps and propose precise, testable wording. Before calling update_ticket or move_ticket, describe the exact change and ask for an explicit yes/no confirmation. Only call the mutation tool after the human confirms. You can update title, description, criteria, assignees, category, priority, due date, linked assumption, and column. Be conversational and concise: normally one to three spoken sentences. Distinguish facts from assumptions. Never say an action is complete until its tool result confirms success. After a successful tool result, acknowledge it naturally and ask the next useful question. After a failed result, explain the failure and ask for the information needed to recover. Whenever a ticket moves to Blocked, ask why and pass it as blockedReason on that same move_ticket or create_ticket call -- never leave a blocked ticket without a recorded reason. The BOARD section below marks any blocked ticket still missing one.
 
 VENTURE
 Name: ${venture.name}

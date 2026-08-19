@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Plus,
   Filter,
@@ -34,9 +34,14 @@ import { cardAssignees } from "@/lib/venture/members";
 export interface BoardTabProps {
   venture: Venture;
   onUpdateVenture: (venture: Venture) => void;
+  // Set by the dashboard shell when Sarah resolves a specific ticket in chat (see
+  // AiAnalystPanel's "founderally:open-card" dispatch), so a card reference in conversation
+  // actually opens that card here instead of just being narrated in the reply text.
+  pendingOpenCardId?: string | null;
+  onPendingCardOpened?: () => void;
 }
 
-export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
+export function BoardTab({ venture, onUpdateVenture, pendingOpenCardId, onPendingCardOpened }: BoardTabProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCard, setSelectedCard] = useState<{ card: KanbanCard; colKey: keyof Venture["columns"] } | null>(null);
   const [quickAddCol, setQuickAddCol] = useState<keyof Venture["columns"] | null>(null);
@@ -64,6 +69,22 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
       },
     }));
   };
+
+  // Opens the card Sarah just referenced in chat. Sets selectedCard directly rather than
+  // going through openCardForDiscussion -- that would re-dispatch "founderally:focus-ticket"
+  // back at the chat panel that just triggered this in the first place.
+  useEffect(() => {
+    if (!pendingOpenCardId) return;
+    const match = (Object.keys(venture.columns) as Array<keyof Venture["columns"]>)
+      .flatMap((colKey) => (venture.columns[colKey]?.items || []).map((card) => ({ card, colKey })))
+      .find(({ card }) => card.id === pendingOpenCardId);
+    // Syncing to an external signal (a chat-triggered card reference), the same pattern
+    // already used elsewhere in this app (e.g. AiAnalystPanel's venture-load effect), not a
+    // derived-render loop.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (match) setSelectedCard(match);
+    onPendingCardOpened?.();
+  }, [pendingOpenCardId, venture.columns, onPendingCardOpened]);
 
   const getTagBadgeStyle = (category: KanbanCard["category"]) => {
     switch (category) {
@@ -167,6 +188,12 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
 
     VentureStore.updateVenture(updatedVenture);
     onUpdateVenture(updatedVenture);
+
+    // Dragging a card into Blocked doesn't have anywhere to type a reason -- open the detail
+    // modal right on top of the drop, where the "Why is this blocked?" field is right there.
+    if (toCol === "blocked") {
+      setSelectedCard({ card: transitionedCard, colKey: toCol });
+    }
   };
 
   const handleDeleteCard = (cardId: string, colKey: keyof Venture["columns"]) => {
@@ -603,6 +630,18 @@ export function BoardTab({ venture, onUpdateVenture }: BoardTabProps) {
                       <div className="text-xs font-bold text-slate-900 leading-snug py-2 break-words line-clamp-3 min-w-0">
                         {item.title}
                       </div>
+
+                      {colKey === "blocked" && (
+                        <div
+                          className="mb-1.5 flex items-start gap-1 rounded-lg bg-rose-50 border border-rose-200 px-2 py-1 text-[10px] font-semibold text-rose-700"
+                          title={item.blockedReason}
+                        >
+                          <AlertCircle className="mt-0.5 w-2.5 h-2.5 shrink-0" />
+                          <span className="line-clamp-2">
+                            {item.blockedReason || "No reason recorded yet -- click to add one"}
+                          </span>
+                        </div>
+                      )}
 
                       {/* Trello Badges Row (Description, Checklist, Assumption, Progress) */}
                       <div className="flex items-center justify-between pt-1 border-t border-slate-100/70 text-[10px] text-slate-400 font-medium">

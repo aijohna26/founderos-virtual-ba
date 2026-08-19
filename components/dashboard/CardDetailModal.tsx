@@ -137,6 +137,7 @@ export function CardDetailModal({
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
   const [targetCol, setTargetCol] = useState<keyof Venture["columns"]>(columnKey);
   const [linkedAssumptionId, setLinkedAssumptionId] = useState<string>(card.linkedAssumptionId || "");
+  const [blockedReason, setBlockedReason] = useState<string>(card.blockedReason || "");
 
   // Voice Dictation & AI Structuring State
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
@@ -152,6 +153,7 @@ export function CardDetailModal({
   const ticketHistory = getTicketActivity(venture, card.id).slice(0, 8);
 
   const handleSaveAll = (overrideCol?: keyof Venture["columns"]) => {
+    const nextCol = overrideCol || targetCol;
     const updated: KanbanCard = {
       ...card,
       title: title.trim() || card.title,
@@ -164,10 +166,13 @@ export function CardDetailModal({
       checklists,
       linkedAssumptionId: linkedAssumptionId || undefined,
       progress: totalItems > 0 ? checklistPercent : card.progress,
-      completed: (overrideCol || targetCol) === "done",
+      completed: nextCol === "done",
+      // Cleared for any column other than Blocked -- a reason only makes sense attached to
+      // an actually-blocked ticket, matching transitionTicketStatus's own clear-on-leave rule.
+      blockedReason: nextCol === "blocked" ? (blockedReason.trim() || undefined) : undefined,
     };
 
-    onUpdateCard(updated, overrideCol || targetCol);
+    onUpdateCard(updated, nextCol);
   };
 
   const saveStructuredContent = (nextDescription: string, nextChecklists: CardChecklistItem[]) => {
@@ -794,6 +799,22 @@ Please write out all criteria completely without truncation.`,
                 <option value="blocked">Blocked</option>
               </select>
             </div>
+
+            {targetCol === "blocked" && (
+              <div className="space-y-1.5 rounded-xl border border-rose-200 bg-rose-50 p-3">
+                <label className="text-[11px] font-bold text-rose-700 uppercase tracking-wider block">
+                  Why is this blocked?
+                </label>
+                <textarea
+                  value={blockedReason}
+                  onChange={(e) => setBlockedReason(e.target.value)}
+                  onBlur={() => handleSaveAll("blocked")}
+                  placeholder="e.g. Waiting on API keys from the payment provider"
+                  rows={2}
+                  className="w-full p-2 rounded-lg border border-rose-200 bg-white text-xs font-medium focus:outline-none focus:ring-2 focus:ring-rose-400 placeholder:text-slate-400"
+                />
+              </div>
+            )}
 
             {/* Link to Assumption */}
             <div className="space-y-1.5">

@@ -213,6 +213,9 @@ export class BAAgentService {
             checklists: mergeTicketCriteria([], args.acceptanceCriteria, "replace", [], makeCriterionId),
             createdAt: now,
             statusChangedAt: now,
+            blockedReason: validCol === "blocked" && typeof args.blockedReason === "string"
+              ? args.blockedReason.trim() || undefined
+              : undefined,
           };
           const newCard = validCol === "in_progress"
             ? transitionTicketStatus(baseCard, "today", "in_progress", now)
@@ -282,6 +285,9 @@ export class BAAgentService {
               linkedAssumptionId: args.linkedAssumptionId !== undefined
                 ? (args.linkedAssumptionId || undefined)
                 : matchedCard.linkedAssumptionId,
+              blockedReason: column === "blocked"
+                ? (args.blockedReason !== undefined ? (args.blockedReason || undefined) : matchedCard.blockedReason)
+                : matchedCard.blockedReason,
               checklists: nextCriteria,
               progress: nextCriteria.length > 0 ? Math.round((completedCriteria / nextCriteria.length) * 100) : matchedCard.progress,
             };
@@ -377,7 +383,9 @@ export class BAAgentService {
             const updatedFrom = getColItems(currentColumns[fromCol]).filter(
               (c) => c.id !== foundCard!.id
             );
-            const transitionedCard = transitionTicketStatus(foundCard, fromCol, toCol);
+            const transitionedCard = transitionTicketStatus(foundCard, fromCol, toCol, undefined, {
+              blockedReason: typeof args.blockedReason === "string" ? args.blockedReason : undefined,
+            });
             const updatedTo = [
               ...getColItems(currentColumns[toCol]),
               { ...transitionedCard, completed: toCol === "done" },
@@ -395,7 +403,9 @@ export class BAAgentService {
               type: "moved",
               actor: "advisor",
               source: "ba_tool",
-              summary: `Moved "${transitionedCard.title}" from ${currentColumns[fromCol].name} to ${currentColumns[toCol].name}`,
+              summary: toCol === "blocked" && transitionedCard.blockedReason
+                ? `Moved "${transitionedCard.title}" from ${currentColumns[fromCol].name} to ${currentColumns[toCol].name}: ${transitionedCard.blockedReason}`
+                : `Moved "${transitionedCard.title}" from ${currentColumns[fromCol].name} to ${currentColumns[toCol].name}`,
               fromColumn: fromCol,
               toColumn: toCol,
             });
@@ -404,12 +414,15 @@ export class BAAgentService {
             result = {
               toolName,
               success: true,
-              message: `Moved ticket "${foundCard.title}" from ${fromCol.toUpperCase()} to ${toCol.toUpperCase()}`,
+              message: toCol === "blocked" && !transitionedCard.blockedReason
+                ? `Moved ticket "${foundCard.title}" from ${fromCol.toUpperCase()} to ${toCol.toUpperCase()}. Ask why it's blocked and call this tool again with blockedReason so it's recorded.`
+                : `Moved ticket "${foundCard.title}" from ${fromCol.toUpperCase()} to ${toCol.toUpperCase()}`,
               data: {
                 ticketId: foundCard.id,
                 cardTitle: foundCard.title,
                 fromColumn: fromCol,
                 toColumn: toCol,
+                blockedReason: transitionedCard.blockedReason || null,
                 inProgressSince: transitionedCard.inProgressSince || null,
                 inProgressDays: toCol === "in_progress" ? getInProgressAgeDays(transitionedCard) : null,
               },

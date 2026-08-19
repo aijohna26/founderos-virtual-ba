@@ -6,6 +6,7 @@ export interface TicketAgingFields {
   inProgressSince?: string;
   inProgressSinceInferred?: boolean;
   lastInProgressDurationDays?: number;
+  blockedReason?: string;
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -31,29 +32,39 @@ export function transitionTicketStatus<T extends TicketAgingFields>(
   fromColumn: TicketBoardColumn,
   toColumn: TicketBoardColumn,
   nowIso: string = new Date().toISOString(),
+  options?: { blockedReason?: string },
 ): T {
-  if (fromColumn === toColumn) return ticket;
-
-  if (toColumn === "in_progress") {
-    return {
-      ...ticket,
-      statusChangedAt: nowIso,
-      inProgressSince: nowIso,
-      inProgressSinceInferred: false,
-    };
+  if (fromColumn === toColumn) {
+    // No column change, but a reason can still be recorded/edited on an already-blocked
+    // ticket (e.g. the founder fills it in a moment after the drag-and-drop that blocked it).
+    if (toColumn === "blocked" && options?.blockedReason !== undefined) {
+      return { ...ticket, blockedReason: options.blockedReason.trim() || undefined };
+    }
+    return ticket;
   }
 
-  if (fromColumn === "in_progress") {
+  let next: T = { ...ticket, statusChangedAt: nowIso };
+
+  if (toColumn === "in_progress") {
+    next = { ...next, inProgressSince: nowIso, inProgressSinceInferred: false };
+  } else if (fromColumn === "in_progress") {
     const durationDays = getInProgressAgeDays(ticket, new Date(nowIso));
-    return {
-      ...ticket,
-      statusChangedAt: nowIso,
+    next = {
+      ...next,
       inProgressSince: undefined,
       inProgressSinceInferred: undefined,
       lastInProgressDurationDays: durationDays ?? ticket.lastInProgressDurationDays,
     };
   }
 
-  return { ...ticket, statusChangedAt: nowIso };
+  if (toColumn === "blocked") {
+    next = { ...next, blockedReason: options?.blockedReason?.trim() || ticket.blockedReason };
+  } else if (fromColumn === "blocked") {
+    // Leaving Blocked clears the reason -- it described why the ticket was stuck there
+    // specifically, and would be stale/misleading attached to whatever column it moves to.
+    next = { ...next, blockedReason: undefined };
+  }
+
+  return next;
 }
 

@@ -47,6 +47,7 @@ export function describeTicketChanges(before: KanbanCard, after: KanbanCard): st
   if (JSON.stringify(before.assigneeIds || []) !== JSON.stringify(after.assigneeIds || [])) changes.push("assignees");
   if ((before.dueDate || "") !== (after.dueDate || "")) changes.push("due date");
   if ((before.linkedAssumptionId || "") !== (after.linkedAssumptionId || "")) changes.push("linked assumption");
+  if ((before.blockedReason || "") !== (after.blockedReason || "")) changes.push("blocked reason");
   if (JSON.stringify(before.checklists || []) !== JSON.stringify(after.checklists || [])) changes.push("acceptance criteria");
   return changes;
 }

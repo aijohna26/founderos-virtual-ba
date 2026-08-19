@@ -33,6 +33,8 @@ export interface KanbanCard {
   inProgressSinceInferred?: boolean;
   /** Most recently completed stay in In Progress, retained for ticket history. */
   lastInProgressDurationDays?: number;
+  /** Why this ticket is in the Blocked column. Cleared automatically when it leaves Blocked. */
+  blockedReason?: string;
 }
 
 export type VentureMemberRole = "owner" | "cofounder" | "member" | "advisor" | "external";
