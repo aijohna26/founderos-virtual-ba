@@ -738,6 +738,24 @@ export function AiAnalystPanel({
           setMicWarning("Live voice hit a snag, so this call is using the standard voice fallback instead.");
           speakFallbackGreeting();
         },
+        onSessionTimedOut: () => {
+          // GeminiLiveService already disconnects itself right after this fires -- just
+          // reflect that in the UI. The wrap-up itself (Sarah summarizing aloud) already
+          // happened a few minutes earlier via the in-session warning nudge, and is already
+          // in chat history like any other reply.
+          setIsDailyCallActive(false);
+          setIsSpeakingAI(false);
+          setVoiceState("idle");
+          setMicWarning("That call hit the 30-minute session limit. I've saved everything up to that point -- start a new call to keep going.");
+        },
+        onIdleDisconnect: () => {
+          // Sarah already said a sign-off line in-session (see GeminiLiveService's idle
+          // nudges); this just reflects the ended call in the UI.
+          setIsDailyCallActive(false);
+          setIsSpeakingAI(false);
+          setVoiceState("idle");
+          setMicWarning("Ended the call after a while with no response -- I've saved where we got to. Start a new call whenever you're ready.");
+        },
       },
       advisor,
       `Start our conversation now with the most useful thing to raise first for ${ventureRef.current.name}, given the current sprint context.`

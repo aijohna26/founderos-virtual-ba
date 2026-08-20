@@ -9,6 +9,13 @@ import { MemoryService } from "@/lib/db/memoryService";
 import { DocumentStore } from "@/lib/store/documentStore";
 import { buildGeminiLiveConfig } from "@/lib/agent/geminiLiveConfig";
 import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
+import {
+  IDLE_DISCONNECT_SECONDS,
+  IDLE_SIGNOFF_GRACE_MS,
+  IDLE_WARNING_SECONDS,
+  LIVE_SESSION_WARNING_LEAD_MINUTES,
+  MAX_LIVE_SESSION_MINUTES,
+} from "@/lib/config/liveUsageConfig";
 import { DEFAULT_ADVISOR, type AdvisorPersona } from "@/lib/config/advisorPersonas";
 import {
   isProposalCancellation,
@@ -33,6 +40,13 @@ export interface GeminiLiveServiceCallbacks {
   onToolExecuted: (toolName: string, result: ToolExecutionResult) => void;
   onVentureUpdated: (venture: Venture) => void;
   onError: (error: string) => void;
+  /** Fired right before the 30-minute hard cutoff forces a disconnect, distinct from
+   * onError -- this isn't a failure, it's the session doing exactly what it's supposed to. */
+  onSessionTimedOut: () => void;
+  /** Fired after the founder goes quiet through both the "are you still there?" check-in and
+   * the grace period after it -- distinct from onSessionTimedOut (different reason: absence,
+   * not the time cap) and onError (nothing went wrong). */
+  onIdleDisconnect: () => void;
 }
 
 interface LiveSessionAuthorization {
@@ -69,6 +83,10 @@ export class GeminiLiveService {
   private pendingTicketMutation: { name: string; args: Record<string, unknown> } | null = null;
   private usageSessionId: string | null = null;
   private readonly handlePageHide = () => this.endUsageSession();
+  private sessionWarningTimer: ReturnType<typeof setTimeout> | null = null;
+  private sessionCutoffTimer: ReturnType<typeof setTimeout> | null = null;
+  private idleWarningTimer: ReturnType<typeof setTimeout> | null = null;
+  private idleDisconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     venture: Venture,
@@ -197,6 +215,8 @@ export class GeminiLiveService {
         return false;
       }
       this.callbacks.onStateChange("listening");
+      this.scheduleSessionTimeLimits(connectGeneration);
+      this.resetIdleTimer();
       AIOperationsLogger.logOperation({
         ventureId: this.venture.id,
         ceremony: "daily_standup",
@@ -281,6 +301,7 @@ export class GeminiLiveService {
       this.callbacks.onTranscript("user", content.interimInputTranscription.text, false);
     }
     if (content?.inputTranscription?.text) {
+      this.resetIdleTimer();
       this.lastFinalUserTranscript = content.inputTranscription.text.trim();
       if (isProposalCancellation(this.lastFinalUserTranscript)) {
         this.pendingTicketMutation = null;
@@ -295,6 +316,7 @@ export class GeminiLiveService {
     if (content?.modelTurn?.parts) {
       for (const part of content.modelTurn.parts) {
         if (part.inlineData?.data) {
+          this.resetIdleTimer();
           this.playPcmChunk(part.inlineData.data);
           this.callbacks.onStateChange("speaking");
         }
@@ -310,6 +332,7 @@ export class GeminiLiveService {
     }
 
     if (message.toolCall?.functionCalls?.length) {
+      this.resetIdleTimer();
       this.callbacks.onStateChange("using_tool");
       const functionResponses = message.toolCall.functionCalls.map((call) => {
         const startedAt = performance.now();
@@ -470,6 +493,82 @@ export class GeminiLiveService {
     this.callbacks.onStateChange("disconnected");
   }
 
+  /**
+   * P0 #4: 30-minute maximum Live session. Scheduled once the mic is actually live (not from
+   * when connect() was first called), so the cap reflects real conversation time. A warning
+   * fires a few minutes before the cutoff -- as a text nudge into the live session so Sarah
+   * herself announces it naturally in-voice, using the existing transcript/tool machinery
+   * rather than a separate summary-generation step -- then a hard disconnect follows at the
+   * cap. `connectGeneration` is captured at schedule time so a manual disconnect/reconnect
+   * before either fires can't let a stale timer act on the wrong session.
+   */
+  private scheduleSessionTimeLimits(connectGeneration: number): void {
+    const warningDelayMs = Math.max(
+      0,
+      (MAX_LIVE_SESSION_MINUTES - LIVE_SESSION_WARNING_LEAD_MINUTES) * 60_000,
+    );
+    this.sessionWarningTimer = setTimeout(() => {
+      if (connectGeneration !== this.connectGeneration || !this.session) return;
+      this.session.sendRealtimeInput({
+        text: `[SYSTEM: Only ${LIVE_SESSION_WARNING_LEAD_MINUTES} minutes remain before this Live session must end. Tell the founder now, briefly: we're nearly at the end of this session, summarize the key decisions and commitments so far, and ask if anything important still needs to be resolved before we finish.]`,
+      });
+    }, warningDelayMs);
+
+    this.sessionCutoffTimer = setTimeout(() => {
+      if (connectGeneration !== this.connectGeneration) return;
+      this.callbacks.onSessionTimedOut();
+      this.disconnect();
+    }, MAX_LIVE_SESSION_MINUTES * 60_000);
+  }
+
+  private clearSessionTimeLimits(): void {
+    if (this.sessionWarningTimer) clearTimeout(this.sessionWarningTimer);
+    if (this.sessionCutoffTimer) clearTimeout(this.sessionCutoffTimer);
+    this.sessionWarningTimer = null;
+    this.sessionCutoffTimer = null;
+  }
+
+  /**
+   * P0 #5: idle detection. (Re)arms on genuine activity only -- a final user transcript, a
+   * tool call, or Sarah actually speaking a turn -- never on interim ASR blips or ambient
+   * audio, so background noise can neither reset this nor be mistaken for the founder still
+   * being present. This also catches the doc's named "stale session" cases (sleeping laptop,
+   * dead network, an abandoned tab) for free: every one of them simply stops producing
+   * activity, so the same clock ends all of them the same way.
+   */
+  private resetIdleTimer(): void {
+    if (this.idleWarningTimer) clearTimeout(this.idleWarningTimer);
+    if (this.idleDisconnectTimer) clearTimeout(this.idleDisconnectTimer);
+    this.idleDisconnectTimer = null;
+
+    const generation = this.connectGeneration;
+    this.idleWarningTimer = setTimeout(() => {
+      if (generation !== this.connectGeneration || !this.session) return;
+      this.session.sendRealtimeInput({
+        text: "[SYSTEM: The founder has been quiet for about a minute. Check in briefly and naturally -- ask if they're still there.]",
+      });
+
+      this.idleDisconnectTimer = setTimeout(() => {
+        if (generation !== this.connectGeneration || !this.session) return;
+        this.session.sendRealtimeInput({
+          text: "[SYSTEM: There's been no response to your check-in. Say a brief, natural goodbye -- you're ending the call here and you've saved progress so far.]",
+        });
+        setTimeout(() => {
+          if (generation !== this.connectGeneration) return;
+          this.callbacks.onIdleDisconnect();
+          this.disconnect();
+        }, IDLE_SIGNOFF_GRACE_MS);
+      }, IDLE_DISCONNECT_SECONDS * 1000);
+    }, IDLE_WARNING_SECONDS * 1000);
+  }
+
+  private clearIdleTimer(): void {
+    if (this.idleWarningTimer) clearTimeout(this.idleWarningTimer);
+    if (this.idleDisconnectTimer) clearTimeout(this.idleDisconnectTimer);
+    this.idleWarningTimer = null;
+    this.idleDisconnectTimer = null;
+  }
+
   /** Finalizes this session's live_usage_sessions row via the server's own clock. Uses
    * sendBeacon so it reliably completes even during a tab close/unload, when a normal fetch
    * could get cancelled mid-flight. Safe to call more than once (server-side no-op on an
@@ -518,6 +617,8 @@ export class GeminiLiveService {
 
   private cleanup(): void {
     this.isConnected = false;
+    this.clearSessionTimeLimits();
+    this.clearIdleTimer();
     this.stopPlayback();
     try { this.session?.close(); } catch {}
     this.session = null;

@@ -43,7 +43,7 @@ export function StandupTab({
   const [interimTranscript, setInterimTranscript] = useState("");
   const [activeToolNotice, setActiveToolNotice] = useState<string | null>(null);
   const [audioAnalyser, setAudioAnalyser] = useState<AnalyserNode | null>(null);
-  const [allowanceExhaustedMessage, setAllowanceExhaustedMessage] = useState<string | null>(null);
+  const [voiceSessionNotice, setVoiceSessionNotice] = useState<string | null>(null);
   const [, setPersistenceRevision] = useState(0);
   const eligibleParticipants = (venture.members || []).filter((member) => member.status === "active" && member.canJoinStandup);
   const [participantIds, setParticipantIds] = useState<string[]>(() => {
@@ -120,12 +120,31 @@ export function StandupTab({
     }
 
     fallbackActiveRef.current = false;
-    setAllowanceExhaustedMessage(null);
+    setVoiceSessionNotice(null);
     setIsDailyCallActive(true);
     setSessionState("connecting");
     const standupVenture = captureStandupSnapshot(venture, new Date().toISOString(), participantIds);
     VentureStore.updateVenture(standupVenture);
     onUpdateVenture(standupVenture);
+
+    // Shared by onSessionTimedOut and onIdleDisconnect: GeminiLiveService has already
+    // disconnected itself and Sarah already said her sign-off line in-session by the time
+    // either callback fires -- this just finalizes the ceremony record and resets the UI the
+    // same way a manual end-call does, with a notice explaining why it ended on its own.
+    const endCallAutomatically = (notice: string) => {
+      liveClientRef.current = null;
+      VoiceEngine.stopSpeaking();
+      VoiceEngine.stopListening();
+      setIsDailyCallActive(false);
+      setSessionState("idle");
+      setInterimTranscript("");
+      setActiveToolNotice(null);
+      setAudioAnalyser(null);
+      setVoiceSessionNotice(notice);
+      const completedVenture = finishActiveStandupSession(standupVenture);
+      VentureStore.updateVenture(completedVenture);
+      onUpdateVenture(completedVenture);
+    };
 
     // Initialize Gemini Live Service
     const client = new GeminiLiveService(
@@ -159,12 +178,18 @@ export function StandupTab({
             // fallback here, that would defeat the entire point of the Live Voice cap.
             setIsDailyCallActive(false);
             setSessionState("idle");
-            setAllowanceExhaustedMessage(
+            setVoiceSessionNotice(
               "You've used all your Live Voice minutes for this period. Voice stand-ups resume next month; text chat still works.",
             );
             return;
           }
           handleFallbackGreeting(standupVenture);
+        },
+        onSessionTimedOut: () => {
+          endCallAutomatically("That stand-up hit the 30-minute session limit. I've saved everything up to that point.");
+        },
+        onIdleDisconnect: () => {
+          endCallAutomatically("Ended the stand-up after a while with no response -- I've saved where we got to.");
         },
       },
       selectedPersona
@@ -266,10 +291,10 @@ export function StandupTab({
         </div>
       )}
 
-      {allowanceExhaustedMessage && (
+      {voiceSessionNotice && (
         <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-2.5">
           <AlertOctagon className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
-          <p className="text-xs font-semibold text-amber-800 leading-relaxed">{allowanceExhaustedMessage}</p>
+          <p className="text-xs font-semibold text-amber-800 leading-relaxed">{voiceSessionNotice}</p>
         </div>
       )}
 
