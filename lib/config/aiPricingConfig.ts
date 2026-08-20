@@ -8,6 +8,14 @@
 // https://ai.google.dev/gemini-api/docs/pricing before any real margin/gross-cost decision
 // is made from this ledger's estimatedCostUsd numbers. Treat them as "roughly this order of
 // magnitude," not "accurate to the cent," until verified and this comment is updated.
+//
+// PRICING_VERIFIED: false -- last touched 2026-08-21, numbers not checked against a live
+// Google pricing page. Whoever verifies these against real rates should flip this to true
+// and update the date; whoever next changes a model in lib/config/geminiConfig.ts without
+// updating the corresponding row here should flip it back to false.
+export const PRICING_VERIFIED = false;
+export const PRICING_LAST_UPDATED = "2026-08-21";
+
 export interface ModelPricing {
   /** USD per 1,000,000 input tokens. */
   inputPerMillionUsd: number;

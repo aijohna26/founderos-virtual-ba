@@ -15,8 +15,6 @@ const isPublicRoute = createRouteMatcher([
   // The PATCH handler still authenticates and verifies the invited Clerk email.
   "/invite(.*)",
   "/api/venture-invitations(.*)",
-  "/api/ai-analyst(.*)",
-  "/api/generate-venture-analysis(.*)",
   // This route performs its own Clerk auth so unsigned API callers receive JSON 401.
   "/api/persistence(.*)",
   // Clerk billing webhooks are signed with CLERK_WEBHOOK_SIGNING_SECRET, and Stripe's LTD
@@ -26,6 +24,9 @@ const isPublicRoute = createRouteMatcher([
   // Public price/availability for the Lifetime Deal, read by signed-out visitors on
   // /pricing. Read-only, no purchase data -- see app/api/ltd-offer/route.ts.
   "/api/ltd-offer",
+  // Scheduled by vercel.json, invoked by Vercel's cron runner (no Clerk session) -- the
+  // route authenticates itself via CRON_SECRET instead.
+  "/api/cron(.*)",
   // /admin has its own, separate gate: a signed session cookie issued after checking
   // ADMIN_USER/ADMIN_PASS from .env.local (see lib/admin/auth.ts), not a Clerk session --
   // the page and every /api/admin/* route verify that cookie themselves.

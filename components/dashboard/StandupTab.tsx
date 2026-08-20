@@ -183,6 +183,14 @@ export function StandupTab({
             );
             return;
           }
+          if (err.toLowerCase().includes("already") && err.toLowerCase().includes("active")) {
+            // Same reasoning: the one-session-per-user guard working as intended, not a
+            // failure to paper over with the TTS fallback.
+            setIsDailyCallActive(false);
+            setSessionState("idle");
+            setVoiceSessionNotice("You already have a Live Voice call active in another tab or device -- end that one first.");
+            return;
+          }
           handleFallbackGreeting(standupVenture);
         },
         onSessionTimedOut: () => {

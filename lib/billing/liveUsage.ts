@@ -85,32 +85,55 @@ export async function getUsedMinutesThisPeriod(userId: string): Promise<number |
   return totalMs / 60000;
 }
 
-/** Returns the new session's id, or null if it couldn't be recorded (metering unavailable). */
-export async function createLiveUsageSession(params: {
+export type ReserveLiveSessionResult =
+  | { ok: true; sessionId: string }
+  | { ok: false; reason: "allowance_exhausted" | "already_active" | "not_configured" };
+
+/**
+ * Atomically checks the allowance and creates the session row in one transaction (Postgres
+ * function reserve_live_session), instead of a separate read-then-write. Two round trips let
+ * two near-simultaneous requests (e.g. the same user open in two browser tabs) both read
+ * "under allowance" before either had written a row -- letting both through even with only a
+ * few minutes left. A partial unique index also makes two concurrent *active* sessions for
+ * the same user structurally impossible regardless of the allowance math, which is what
+ * actually surfaces as "already_active" here.
+ */
+export async function reserveLiveSession(params: {
   userId: string;
   ventureId: string;
   planSlug: string;
+  allowanceMinutes: number;
   model: string;
-}): Promise<string | null> {
+}): Promise<ReserveLiveSessionResult> {
   const admin = getSupabaseAdmin();
-  if (!admin) return null;
+  if (!admin) return { ok: false, reason: "not_configured" };
 
   const id = `live-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const { error } = await admin.from("live_usage_sessions").insert({
-    id,
-    user_id: params.userId,
-    venture_id: params.ventureId,
-    plan_slug: params.planSlug,
-    model: params.model,
-    started_at: new Date().toISOString(),
-    status: "active",
+  const { data, error } = await admin.rpc("reserve_live_session", {
+    p_id: id,
+    p_user_id: params.userId,
+    p_venture_id: params.ventureId,
+    p_plan_slug: params.planSlug,
+    p_model: params.model,
+    p_allowance_minutes: params.allowanceMinutes,
+    p_period_start: getCurrentPeriodStart(),
+    p_max_session_minutes: MAX_LIVE_SESSION_MINUTES,
   });
 
   if (error) {
-    console.error("Failed to create live usage session:", error);
-    return null;
+    if (error.message?.includes("allowance_exhausted")) {
+      return { ok: false, reason: "allowance_exhausted" };
+    }
+    if (error.code === "23505" || error.message?.toLowerCase().includes("duplicate key")) {
+      return { ok: false, reason: "already_active" };
+    }
+    console.error("Failed to reserve live session:", error);
+    return { ok: false, reason: "not_configured" };
   }
-  return id;
+
+  const row = Array.isArray(data) ? data[0] : data;
+  if (!row?.id) return { ok: false, reason: "not_configured" };
+  return { ok: true, sessionId: String(row.id) };
 }
 
 /**
@@ -160,4 +183,67 @@ export async function endLiveUsageSession(sessionId: string, userId: string): Pr
     outputMinutes: durationMinutes,
     sessionDurationSeconds: durationMinutes * 60,
   });
+}
+
+/**
+ * P0 #4: closes out sessions abandoned without a clean disconnect (crash, force-quit, a
+ * pagehide beacon that never arrived) and writes their AI cost ledger entry. Allowance
+ * enforcement already treats these correctly -- getUsedMinutesThisPeriod (via
+ * reserve_live_session) caps any still-active session at MAX_LIVE_SESSION_MINUTES on read,
+ * so nobody gets extra allowance from an orphaned session. But that's a read-time cap, not a
+ * write: ai_cost_ledger only ever gets a row from endLiveUsageSession(), which never runs for
+ * a session that's never explicitly closed. Without this, Cost Ops would under-report real
+ * spend. Meant to run on a schedule (see app/api/cron/reconcile-live-sessions).
+ */
+export async function reconcileStaleLiveSessions(): Promise<{ reconciled: number }> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return { reconciled: 0 };
+
+  const staleCutoff = new Date(Date.now() - MAX_LIVE_SESSION_MINUTES * 60 * 1000).toISOString();
+
+  const { data: staleSessions, error: selectError } = await admin
+    .from("live_usage_sessions")
+    .select("id, user_id, venture_id, plan_slug, model, started_at")
+    .eq("status", "active")
+    .lt("started_at", staleCutoff);
+
+  if (selectError) {
+    console.error("Failed to find stale live sessions:", selectError);
+    return { reconciled: 0 };
+  }
+  if (!staleSessions || staleSessions.length === 0) return { reconciled: 0 };
+
+  let reconciled = 0;
+  for (const session of staleSessions) {
+    const startedAt = Date.parse(String(session.started_at));
+    if (!Number.isFinite(startedAt)) continue;
+    const cappedEndedAt = new Date(startedAt + MAX_LIVE_SESSION_MINUTES * 60 * 1000).toISOString();
+
+    // status='active' guard: if a real disconnect/beacon closed this out in the gap between
+    // the select above and this update, this just no-ops instead of double-finalizing it.
+    const { error: updateError } = await admin
+      .from("live_usage_sessions")
+      .update({ ended_at: cappedEndedAt, status: "ended" })
+      .eq("id", session.id)
+      .eq("status", "active");
+
+    if (updateError) {
+      console.error(`Failed to reconcile stale live session ${session.id}:`, updateError);
+      continue;
+    }
+
+    await recordLiveVoiceCost({
+      userId: String(session.user_id),
+      ventureId: session.venture_id ? String(session.venture_id) : null,
+      planSlug: session.plan_slug ? String(session.plan_slug) : null,
+      sessionId: String(session.id),
+      model: String(session.model),
+      inputMinutes: MAX_LIVE_SESSION_MINUTES,
+      outputMinutes: MAX_LIVE_SESSION_MINUTES,
+      sessionDurationSeconds: MAX_LIVE_SESSION_MINUTES * 60,
+    });
+    reconciled += 1;
+  }
+
+  return { reconciled };
 }

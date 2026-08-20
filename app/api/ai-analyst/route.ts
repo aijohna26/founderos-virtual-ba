@@ -281,10 +281,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Message is required" }, { status: 400 });
     }
 
-    // This route is intentionally public (see proxy.ts) so BA chat keeps working through
-    // auth hiccups -- so userId here is best-effort attribution for the cost ledger, not an
-    // access check. An anonymous caller still gets a normal reply; that turn just isn't
-    // attributed to anyone in ai_cost_ledger.
+    // This route is gated by proxy.ts's blanket auth.protect() like any other -- it was
+    // previously listed as public specifically "so BA chat keeps working through auth
+    // hiccups," which meant an unauthenticated caller could consume the Gemini API with no
+    // way to attribute (or limit) that cost to anyone. userId is guaranteed to be present
+    // here whenever Clerk is actually configured; the try/catch below only matters for local
+    // setups running with no Clerk keys at all, where proxy.ts's own hasClerkKey check
+    // already skips auth.protect() entirely.
     let userId: string | null = null;
     if (process.env.CLERK_SECRET_KEY) {
       try {

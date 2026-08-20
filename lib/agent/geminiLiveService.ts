@@ -80,7 +80,19 @@ export class GeminiLiveService {
   private connectGeneration = 0;
   private authAbortController: AbortController | null = null;
   private lastFinalUserTranscript = "";
-  private pendingTicketMutation: { name: string; args: Record<string, unknown> } | null = null;
+  private pendingTicketMutation: {
+    proposalId: string;
+    name: string;
+    ticketKey: string;
+    args: Record<string, unknown>;
+  } | null = null;
+  // Tracks whichever ticket was last explicitly referenced (by any tool call, not just
+  // mutations) so a follow-up call that omits ticketId/cardTitle -- trusting conversational
+  // context, e.g. a plain "close it" right after discussing one specific ticket -- can still
+  // be correlated and executed against the right ticket, instead of the ticketKey guard
+  // (added to stop cross-ticket approval) deadlocking it forever.
+  private lastKnownTicketId: string | null = null;
+  private lastKnownCardTitle: string | null = null;
   private usageSessionId: string | null = null;
   private readonly handlePageHide = () => this.endUsageSession();
   private sessionWarningTimer: ReturnType<typeof setTimeout> | null = null;
@@ -339,16 +351,42 @@ export class GeminiLiveService {
         const args = (call.args || {}) as Record<string, unknown>;
         const toolName = call.name || "unknown_tool";
         const isTicketMutation = isTicketMutationAction({ type: toolName });
-        // Same tool name is enough to treat this as a follow-up on the pending proposal --
-        // NOT a byte-exact args match. The model re-generates its own tool call in natural
-        // language when it re-confirms, so any rephrasing (e.g. the exact wording of a
-        // blockedReason) would silently break a strict equality check even after the founder
-        // clearly said yes. pendingTicketMutation is a single slot anyway, so "same tool
-        // name while one's outstanding" already identifies which proposal this is.
-        const isPendingFollowUp = this.pendingTicketMutation?.name === toolName;
+
+        // Remember whichever ticket this call explicitly names (any tool, not just
+        // mutations -- get_ticket counts too), so a later call that omits it can still fall
+        // back to "whatever we were just discussing."
+        const explicitTicketId = typeof args.ticketId === "string" ? args.ticketId.trim() : "";
+        const explicitCardTitle = typeof args.cardTitle === "string" ? args.cardTitle.trim() : "";
+        if (explicitTicketId) this.lastKnownTicketId = explicitTicketId;
+        if (explicitCardTitle) this.lastKnownCardTitle = explicitCardTitle;
+
+        // Correlate on tool name + a stable ticket identity, NOT a byte-exact args match and
+        // NOT tool name alone. Byte-exact args broke on natural rephrasing (the model
+        // regenerates its own tool call differently each time it re-confirms). Tool name
+        // alone is worse: it would treat "yes" to a pending move_ticket for Ticket A as
+        // approval for an unrelated move_ticket the model generates for Ticket B in the same
+        // turn, since both share the tool name. Falls back to the last-known ticket when this
+        // specific call doesn't restate one, so "close it" after already discussing a ticket
+        // still resolves instead of deadlocking on an empty key forever.
+        const ticketKey = (explicitTicketId || explicitCardTitle || this.lastKnownTicketId || this.lastKnownCardTitle || "")
+          .toLowerCase();
+        const isPendingFollowUp =
+          ticketKey.length > 0 &&
+          this.pendingTicketMutation?.name === toolName &&
+          this.pendingTicketMutation?.ticketKey === ticketKey;
 
         if (isTicketMutation && !(isPendingFollowUp && isProposalConfirmation(this.lastFinalUserTranscript))) {
-          this.pendingTicketMutation = { name: toolName, args };
+          this.pendingTicketMutation = {
+            // Keep the same proposalId across re-descriptions of the same pending change
+            // (useful for tracing in AIOperationsLogger); only mint a new one when this is
+            // actually a different ticket/tool than whatever was pending before.
+            proposalId: isPendingFollowUp && this.pendingTicketMutation
+              ? this.pendingTicketMutation.proposalId
+              : `proposal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            name: toolName,
+            ticketKey,
+            args,
+          };
           const pendingResult: ToolExecutionResult = {
             toolName,
             success: true,
@@ -375,10 +413,20 @@ export class GeminiLiveService {
         }
 
         if (isTicketMutation) this.pendingTicketMutation = null;
-        this.callbacks.onToolExecuting(toolName, args);
+        // If this call is the one that omitted ticketId/cardTitle (trusting context) but got
+        // resolved via the last-known-ticket fallback above, BAAgentService.executeTool still
+        // needs something concrete to match against -- it has no notion of "context."
+        const executionArgs = isTicketMutation && !explicitTicketId && !explicitCardTitle
+          ? {
+              ...args,
+              ...(this.lastKnownTicketId ? { ticketId: this.lastKnownTicketId } : {}),
+              ...(this.lastKnownCardTitle ? { cardTitle: this.lastKnownCardTitle } : {}),
+            }
+          : args;
+        this.callbacks.onToolExecuting(toolName, executionArgs);
         const result = BAAgentService.executeTool(
           toolName,
-          args,
+          executionArgs,
           this.venture,
           "daily_standup"
         );
@@ -393,7 +441,7 @@ export class GeminiLiveService {
           ceremony: "daily_standup",
           geminiModel: GEMINI_CONFIG.LIVE_MODEL,
           toolRequested: `live_roundtrip:${toolName}`,
-          toolArguments: args,
+          toolArguments: executionArgs,
           toolResult: {
             success: result.success,
             message: result.message,

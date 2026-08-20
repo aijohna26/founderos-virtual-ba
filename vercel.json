@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/reconcile-live-sessions",
+      "schedule": "*/30 * * * *"
+    }
+  ]
+}

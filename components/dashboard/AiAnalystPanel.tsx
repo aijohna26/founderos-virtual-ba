@@ -749,6 +749,13 @@ export function AiAnalystPanel({
             setMicWarning("You've used all your Live Voice minutes for this period. Text chat still works -- voice resets next month.");
             return;
           }
+          if (err.toLowerCase().includes("already") && err.toLowerCase().includes("active")) {
+            // Same reasoning: this isn't a failure to paper over with the TTS fallback --
+            // it's the one-session-per-user guard doing exactly what it's supposed to.
+            setIsDailyCallActive(false);
+            setMicWarning("You already have a Live Voice call active in another tab or device -- end that one first.");
+            return;
+          }
           setMicWarning("Live voice hit a snag, so this call is using the standard voice fallback instead.");
           speakFallbackGreeting();
         },
