@@ -42,6 +42,7 @@ interface LiveSessionAuthorization {
   model: string;
   voice: string;
   sampleRate: number;
+  sessionId?: string | null;
 }
 
 export class GeminiLiveService {
@@ -66,6 +67,8 @@ export class GeminiLiveService {
   private authAbortController: AbortController | null = null;
   private lastFinalUserTranscript = "";
   private pendingTicketMutation: { name: string; args: Record<string, unknown> } | null = null;
+  private usageSessionId: string | null = null;
+  private readonly handlePageHide = () => this.endUsageSession();
 
   constructor(
     venture: Venture,
@@ -135,6 +138,7 @@ export class GeminiLiveService {
       if (!authRes.ok || !auth.token) {
         throw new Error(auth.error || "Failed to provision a Gemini Live token");
       }
+      this.usageSessionId = auth.sessionId || null;
 
       const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       this.outputAudioContext = new AudioCtx({ sampleRate: GEMINI_CONFIG.AUDIO_OUTPUT_SAMPLE_RATE });
@@ -181,6 +185,11 @@ export class GeminiLiveService {
       }
       this.session = session;
       this.authAbortController = null;
+      // Best-effort finalize on tab close/crash -- normal disconnect() already ends the
+      // usage session explicitly; this covers the case where that never gets called.
+      if (typeof window !== "undefined") {
+        window.addEventListener("pagehide", this.handlePageHide);
+      }
 
       await this.startMicrophone();
       if (connectGeneration !== this.connectGeneration || this.isDisconnecting) {
@@ -212,6 +221,10 @@ export class GeminiLiveService {
       }
       const message = error instanceof Error ? error.message : "Failed to connect to Gemini Live";
       this.signalFallback(message);
+      // A usage session may already have been created server-side (token issuance
+      // succeeded) even though the WebSocket connection itself just failed -- close it out
+      // immediately rather than leaving it "active" until the 30-minute cap.
+      this.endUsageSession();
       this.cleanup();
       return false;
     }
@@ -452,8 +465,37 @@ export class GeminiLiveService {
         success: true,
       });
     }
+    this.endUsageSession();
     this.cleanup();
     this.callbacks.onStateChange("disconnected");
+  }
+
+  /** Finalizes this session's live_usage_sessions row via the server's own clock. Uses
+   * sendBeacon so it reliably completes even during a tab close/unload, when a normal fetch
+   * could get cancelled mid-flight. Safe to call more than once (server-side no-op on an
+   * already-ended session). */
+  private endUsageSession(): void {
+    if (typeof window !== "undefined") {
+      window.removeEventListener("pagehide", this.handlePageHide);
+    }
+    if (!this.usageSessionId) return;
+    const sessionId = this.usageSessionId;
+    this.usageSessionId = null;
+    try {
+      const payload = JSON.stringify({ sessionId });
+      if (typeof navigator !== "undefined" && navigator.sendBeacon) {
+        navigator.sendBeacon("/api/live-session/end", new Blob([payload], { type: "application/json" }));
+      } else {
+        void fetch("/api/live-session/end", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: payload,
+          keepalive: true,
+        });
+      }
+    } catch (err) {
+      console.warn("Failed to finalize live usage session:", err);
+    }
   }
 
   private signalFallback(message: string): void {

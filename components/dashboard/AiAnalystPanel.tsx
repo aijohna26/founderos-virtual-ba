@@ -704,8 +704,17 @@ export function AiAnalystPanel({
         onToolExecuting: (toolName) => {
           setLiveToolNotice(`${advisor.name} is executing: ${toolName}...`);
         },
-        onToolExecuted: () => {
+        onToolExecuted: (toolName, result) => {
           setLiveToolNotice(null);
+          // Mirrors the openTicketId wiring on the old /api/ai-analyst text path -- without
+          // this, Sarah resolves the ticket fine (result.data.id) and says "I've opened it,"
+          // but nothing on screen actually reacts, since the Live tool pipeline is entirely
+          // separate from that REST response and was never connected to this event.
+          if (toolName === "get_ticket" && result.success && typeof result.data?.id === "string") {
+            window.dispatchEvent(new CustomEvent("founderally:open-card", {
+              detail: { ventureId: ventureRef.current.id, ticketId: result.data.id },
+            }));
+          }
         },
         onVentureUpdated: (updatedVenture) => {
           ventureRef.current = updatedVenture;
@@ -718,6 +727,14 @@ export function AiAnalystPanel({
           setIsConnectingCall(false);
           setIsLiveCallConnected(false);
           setLiveToolNotice(null);
+          if (err.toLowerCase().includes("allowance exhausted")) {
+            // Falling back to the old unmetered TTS path here would completely defeat the
+            // point of the Live Voice cap -- tell the founder plainly and stop, rather than
+            // silently routing around the limit. Text chat (a separate code path) still works.
+            setIsDailyCallActive(false);
+            setMicWarning("You've used all your Live Voice minutes for this period. Text chat still works -- voice resets next month.");
+            return;
+          }
           setMicWarning("Live voice hit a snag, so this call is using the standard voice fallback instead.");
           speakFallbackGreeting();
         },

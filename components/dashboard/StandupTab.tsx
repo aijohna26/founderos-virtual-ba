@@ -43,6 +43,7 @@ export function StandupTab({
   const [interimTranscript, setInterimTranscript] = useState("");
   const [activeToolNotice, setActiveToolNotice] = useState<string | null>(null);
   const [audioAnalyser, setAudioAnalyser] = useState<AnalyserNode | null>(null);
+  const [allowanceExhaustedMessage, setAllowanceExhaustedMessage] = useState<string | null>(null);
   const [, setPersistenceRevision] = useState(0);
   const eligibleParticipants = (venture.members || []).filter((member) => member.status === "active" && member.canJoinStandup);
   const [participantIds, setParticipantIds] = useState<string[]>(() => {
@@ -119,6 +120,7 @@ export function StandupTab({
     }
 
     fallbackActiveRef.current = false;
+    setAllowanceExhaustedMessage(null);
     setIsDailyCallActive(true);
     setSessionState("connecting");
     const standupVenture = captureStandupSnapshot(venture, new Date().toISOString(), participantIds);
@@ -152,6 +154,16 @@ export function StandupTab({
           console.warn("Gemini Live notice:", err);
           liveClientRef.current?.disconnect();
           liveClientRef.current = null;
+          if (err.toLowerCase().includes("allowance exhausted")) {
+            // Same rule as Daily Call: don't silently reroute through the unmetered TTS
+            // fallback here, that would defeat the entire point of the Live Voice cap.
+            setIsDailyCallActive(false);
+            setSessionState("idle");
+            setAllowanceExhaustedMessage(
+              "You've used all your Live Voice minutes for this period. Voice stand-ups resume next month; text chat still works.",
+            );
+            return;
+          }
           handleFallbackGreeting(standupVenture);
         },
       },
@@ -251,6 +263,13 @@ export function StandupTab({
               );
             })}
           </div>
+        </div>
+      )}
+
+      {allowanceExhaustedMessage && (
+        <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 flex items-start gap-2.5">
+          <AlertOctagon className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+          <p className="text-xs font-semibold text-amber-800 leading-relaxed">{allowanceExhaustedMessage}</p>
         </div>
       )}
 
