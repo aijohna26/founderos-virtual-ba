@@ -188,7 +188,6 @@ export default function DashboardPage() {
           setActiveVentureId={handleActiveVentureChange}
           onOpenCreateVenture={() => setCreateModalOpen(true)}
           isDailyCallActive={isDailyCallActive}
-          setIsDailyCallActive={setIsDailyCallActive}
           onUpdateVenture={handleUpdateVenture}
           onToggleMobileSidebar={() => setMobileSidebarOpen(!mobileSidebarOpen)}
           onToggleMobileAiPanel={() => setMobileAiPanelOpen(!mobileAiPanelOpen)}

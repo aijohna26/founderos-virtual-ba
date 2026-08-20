@@ -35,7 +35,6 @@ export interface TopHeaderProps {
   setActiveVentureId: (id: string) => void;
   onOpenCreateVenture: () => void;
   isDailyCallActive: boolean;
-  setIsDailyCallActive: (active: boolean) => void;
   onUpdateVenture?: (venture: Venture) => void;
   onToggleMobileSidebar?: () => void;
   onToggleMobileAiPanel?: () => void;
@@ -49,7 +48,6 @@ export function TopHeader({
   setActiveVentureId,
   onOpenCreateVenture,
   isDailyCallActive,
-  setIsDailyCallActive,
   onUpdateVenture,
   onToggleMobileSidebar,
   onToggleMobileAiPanel,
@@ -191,12 +189,16 @@ export function TopHeader({
             </button>
           )}
 
-          {/* Daily Call (Tablet/Desktop) */}
+          {/* Daily Call (Tablet/Desktop). Dispatches an event rather than calling
+              setIsDailyCallActive directly -- the actual Gemini Live connection (liveClientRef,
+              toggleCall) lives entirely inside AiAnalystPanel, so this just asks it to start/end
+              the call the same way its own in-panel button does, instead of flipping the shared
+              boolean with nothing behind it. */}
           <button
             onClick={() => {
-              const next = !isDailyCallActive;
-              setIsDailyCallActive(next);
-              if (next) setActiveTab("Board");
+              const startingCall = !isDailyCallActive;
+              window.dispatchEvent(new CustomEvent("founderally:toggle-daily-call"));
+              if (startingCall) setActiveTab("Board");
             }}
             className={`hidden sm:inline-flex items-center gap-2 px-4 py-2 rounded-full font-semibold text-xs transition-all shadow-xs cursor-pointer ${
               isDailyCallActive

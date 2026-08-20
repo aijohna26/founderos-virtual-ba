@@ -339,10 +339,15 @@ export class GeminiLiveService {
         const args = (call.args || {}) as Record<string, unknown>;
         const toolName = call.name || "unknown_tool";
         const isTicketMutation = isTicketMutationAction({ type: toolName });
-        const pendingMatches = this.pendingTicketMutation?.name === toolName
-          && JSON.stringify(this.pendingTicketMutation.args) === JSON.stringify(args);
+        // Same tool name is enough to treat this as a follow-up on the pending proposal --
+        // NOT a byte-exact args match. The model re-generates its own tool call in natural
+        // language when it re-confirms, so any rephrasing (e.g. the exact wording of a
+        // blockedReason) would silently break a strict equality check even after the founder
+        // clearly said yes. pendingTicketMutation is a single slot anyway, so "same tool
+        // name while one's outstanding" already identifies which proposal this is.
+        const isPendingFollowUp = this.pendingTicketMutation?.name === toolName;
 
-        if (isTicketMutation && !(pendingMatches && isProposalConfirmation(this.lastFinalUserTranscript))) {
+        if (isTicketMutation && !(isPendingFollowUp && isProposalConfirmation(this.lastFinalUserTranscript))) {
           this.pendingTicketMutation = { name: toolName, args };
           const pendingResult: ToolExecutionResult = {
             toolName,

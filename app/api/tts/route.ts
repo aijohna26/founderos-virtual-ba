@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { GoogleGenAI } from "@google/genai";
+import { auth } from "@clerk/nextjs/server";
 import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
 import { findAdvisorByVoice } from "@/lib/config/advisorPersonas";
+import { recordTtsCost } from "@/lib/billing/aiCostLedger";
 
 // Convert 24kHz 1-channel 16-bit PCM buffer to standard WAV format
 function pcmToWav(pcmBuffer: Buffer, sampleRate: number = 24000, numChannels: number = 1): Buffer {
@@ -38,6 +40,19 @@ export async function POST(req: NextRequest) {
 
     if (!text || typeof text !== "string" || text.trim().length === 0) {
       return NextResponse.json({ error: "Text is required" }, { status: 400 });
+    }
+
+    // This route is gated by proxy.ts (a Clerk session is required to reach it at all), so
+    // userId here should reliably resolve when Clerk is configured -- unlike /api/ai-analyst,
+    // which is intentionally public and treats this the same lookup as best-effort.
+    let userId: string | null = null;
+    if (process.env.CLERK_SECRET_KEY) {
+      try {
+        const authResult = await auth();
+        userId = authResult.userId ?? null;
+      } catch {
+        // Fall through -- cost just won't be attributed to a user for this call.
+      }
     }
 
     // Clean markdown, JSON blocks, asterisks, bullet points from spoken text
@@ -87,6 +102,18 @@ export async function POST(req: NextRequest) {
             ? pcmToWav(rawAudioBuffer, sampleRate)
             : rawAudioBuffer;
           const returnMime = isRawPcm ? "audio/wav" : mimeType;
+
+          // Measured from the actual PCM buffer (16-bit mono, 2 bytes/sample) rather than
+          // estimated from token usage -- more accurate for audio, and what
+          // estimateTtsCostUsd expects (Gemini audio pricing is quoted per minute, not per
+          // token). Awaited, not fire-and-forget: this can run on a serverless function that
+          // suspends the instant the response is sent.
+          const durationMinutes = rawAudioBuffer.length / (sampleRate * 2) / 60;
+          await recordTtsCost({
+            userId,
+            model: GEMINI_CONFIG.AUDIO_MODEL,
+            outputMinutes: durationMinutes,
+          });
 
           return new NextResponse(new Uint8Array(returnBuffer), {
             headers: {

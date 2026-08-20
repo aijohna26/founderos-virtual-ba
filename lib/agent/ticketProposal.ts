@@ -91,10 +91,21 @@ export function createPendingTicketProposal(
   };
 }
 
+// Anchored at the start only, not the whole string -- voice replies (Gemini Live's ASR
+// transcript) are almost never a bare "yes.": "Yes, that is correct.", "Yeah, go ahead and
+// do that", "That's right, please proceed" are the realistic shape of a spoken confirmation.
+// Requiring the entire utterance to be nothing else meant a live confirmation could
+// essentially never match in practice.
+const CONFIRMATION_LEAD_PATTERN =
+  /^(yes|yep|yeah|yup|correct|right|confirm(ed)?|approve[d]?|apply(\s+it)?|do\s+it|go\s+ahead|that('s|\s+is)\s+(correct|right)|sounds\s+good|looks\s+good|make\s+(the|those)\s+changes|save\s+(it|those\s+changes)|please\s+(proceed|go\s+ahead)|proceed)\b/i;
+
+const CANCELLATION_LEAD_PATTERN =
+  /^(no|nope|cancel|discard|stop|don'?t|do\s+not|leave\s+it|never\s*mind|hold\s+on|wait)\b/i;
+
 export function isProposalConfirmation(message: string): boolean {
-  return /^(yes|yep|yeah|confirm|confirmed|approve|approved|apply|apply it|do it|go ahead|make (the|those) changes|save (it|those changes))\b[.!]?$/i.test(message.trim());
+  return CONFIRMATION_LEAD_PATTERN.test(message.trim());
 }
 
 export function isProposalCancellation(message: string): boolean {
-  return /^(no|cancel|discard|stop|don'?t|do not|leave it|never mind|nevermind)\b[.!]?$/i.test(message.trim());
+  return CANCELLATION_LEAD_PATTERN.test(message.trim());
 }

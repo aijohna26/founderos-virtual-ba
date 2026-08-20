@@ -112,6 +112,7 @@ export function AiAnalystPanel({
   const componentActiveRef = useRef(true);
   const isTypingRef = useRef(isTyping);
   const submitMessageRef = useRef<(text: string) => void>(() => {});
+  const toggleCallRef = useRef<() => void>(() => {});
   const liveClientRef = useRef<GeminiLiveService | null>(null);
   // GeminiLiveService callbacks are bound once per call and outlive individual renders, so
   // they need a way to read the *current* venture (not the one closed over when the call
@@ -197,6 +198,19 @@ export function AiAnalystPanel({
     window.addEventListener("founderally:focus-ticket", handleTicketFocus);
     return () => window.removeEventListener("founderally:focus-ticket", handleTicketFocus);
   }, [venture.id, onMobileOpen]);
+
+  // Lets a control outside this panel (TopHeader's own "Daily Call" button) start/end the
+  // same Live call this panel owns, instead of that other button flipping isDailyCallActive
+  // with nothing behind it. toggleCallRef always holds the latest closure (kept in sync by
+  // the effect right after toggleCall's definition below), so this listener never goes stale.
+  useEffect(() => {
+    const handleExternalToggle = () => {
+      if (voiceControlsManagedExternally) return;
+      toggleCallRef.current();
+    };
+    window.addEventListener("founderally:toggle-daily-call", handleExternalToggle);
+    return () => window.removeEventListener("founderally:toggle-daily-call", handleExternalToggle);
+  }, [voiceControlsManagedExternally]);
 
   // Auto-scroll to the top of the latest message
   useEffect(() => {
@@ -764,6 +778,10 @@ export function AiAnalystPanel({
     liveClientRef.current = client;
     await client.connect();
   };
+
+  useEffect(() => {
+    toggleCallRef.current = toggleCall;
+  });
 
   const clearChat = () => {
     if (silenceTimerRef.current) {

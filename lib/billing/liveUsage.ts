@@ -6,6 +6,7 @@ import {
   LIVE_MINUTES_BY_PLAN,
   MAX_LIVE_SESSION_MINUTES,
 } from "@/lib/config/liveUsageConfig";
+import { recordLiveVoiceCost } from "@/lib/billing/aiCostLedger";
 
 export interface LiveAllowance {
   planSlug: string;
@@ -112,18 +113,51 @@ export async function createLiveUsageSession(params: {
   return id;
 }
 
-/** Idempotent -- the `status = 'active'` guard means a repeat call (e.g. both a normal
- * disconnect and a pagehide beacon firing) is a harmless no-op on the second call. */
+/**
+ * Idempotent -- the `status = 'active'` guard means a repeat call (e.g. both a normal
+ * disconnect and a pagehide beacon firing) is a harmless no-op on the second call.
+ *
+ * Also records this session's AI cost ledger entry (P0 #6), computed from the same
+ * server-set started_at/ended_at pair that the allowance check itself trusts -- not
+ * anything the client reports. Gemini Live is full-duplex (mic capture and audio playback
+ * both effectively run for the whole call), so there's no clean way to split "input" from
+ * "output" time without deeper per-turn analysis; this counts the full duration toward both,
+ * which is a deliberate simplification, not a precise input/output breakdown.
+ */
 export async function endLiveUsageSession(sessionId: string, userId: string): Promise<void> {
   const admin = getSupabaseAdmin();
   if (!admin) return;
 
-  const { error } = await admin
+  const { data, error } = await admin
     .from("live_usage_sessions")
     .update({ ended_at: new Date().toISOString(), status: "ended" })
     .eq("id", sessionId)
     .eq("user_id", userId)
-    .eq("status", "active");
+    .eq("status", "active")
+    .select("started_at, ended_at, venture_id, plan_slug, model")
+    .maybeSingle();
 
-  if (error) console.error("Failed to end live usage session:", error);
+  if (error) {
+    console.error("Failed to end live usage session:", error);
+    return;
+  }
+  // maybeSingle() returns no row on the idempotent repeat-call case (already ended) -- fine,
+  // the cost entry was already recorded the first time.
+  if (!data) return;
+
+  const startedAt = Date.parse(String(data.started_at));
+  const endedAt = Date.parse(String(data.ended_at));
+  if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt)) return;
+
+  const durationMinutes = Math.max(0, (endedAt - startedAt) / 60000);
+  await recordLiveVoiceCost({
+    userId,
+    ventureId: data.venture_id ? String(data.venture_id) : null,
+    planSlug: data.plan_slug ? String(data.plan_slug) : null,
+    sessionId,
+    model: String(data.model),
+    inputMinutes: durationMinutes,
+    outputMinutes: durationMinutes,
+    sessionDurationSeconds: durationMinutes * 60,
+  });
 }
