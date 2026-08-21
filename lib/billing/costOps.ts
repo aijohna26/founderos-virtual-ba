@@ -11,14 +11,20 @@ import { getCurrentPeriodStart } from "@/lib/billing/liveUsage";
  * on every subscription.* event -- rather than calling Clerk's Backend Billing API per user
  * (still experimental/beta, and would mean one network round trip per account shown here).
  * One row can appear more than once across a plan change (upserted by subscription_id, not
- * user_id), so this keeps only each user's most-recently-updated *active* row.
+ * user_id), so this keeps only each user's most-recently-updated matching row.
+ *
+ * Includes 'past_due', not just 'active': that status means payment failed but the plan's
+ * features are still live during Clerk's grace period (that's the whole point of the status
+ * existing separately from 'canceled'/'ended'), so a past_due subscriber is still really on
+ * their paid plan. Excluding it would misclassify them as free_user here, showing a false
+ * "approaching cap" warning at 30 min instead of their real (much higher) allowance.
  */
 async function activePlanByUserId(admin: NonNullable<ReturnType<typeof getSupabaseAdmin>>): Promise<Map<string, string>> {
   const result = new Map<string, string>();
   const { data, error } = await admin
     .from("billing_subscriptions")
     .select("user_id, plan_slug, status, updated_at")
-    .eq("status", "active")
+    .in("status", ["active", "past_due"])
     .order("updated_at", { ascending: false });
   if (error) {
     console.error("Cost Ops: failed to read billing_subscriptions:", error);
@@ -187,10 +193,35 @@ export async function getCostOpsSummary(filters: CostOpsFilters): Promise<CostOp
   const avgLiveSessionMinutes = sessionCount > 0 ? totalSessionMinutes / sessionCount : 0;
   const liveMinutesEntries = [...minutesByUser.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20);
 
-  // LTD cohorts: revenue is a hard fact (amount_paid_cents); cost is whatever ai_cost_ledger
-  // attributes to that cohort's members within the filtered window. There's no revenue
-  // figure available for Clerk Billing subscribers here -- Clerk owns that, this app only
-  // mirrors plan/status, not payment amounts -- so margin is only computable for LTD.
+  // LTD cohorts: revenue is a hard fact (amount_paid_cents) and is never date-filtered --
+  // a Lifetime purchase is a one-time payment, not something that recurs "within a period,"
+  // so cost here must be summed the same way (this cohort member's *entire* AI cost to date),
+  // not clipped to whatever from/to window the caller happened to pass for the rest of this
+  // dashboard. Mixing all-time revenue against a filtered cost figure would silently inflate
+  // margin the moment an admin narrows the date range -- exactly the kind of thing that must
+  // not feed a real margin decision, so this is its own unfiltered query rather than reusing
+  // costByUser above. There's no revenue figure available for Clerk Billing subscribers here
+  // -- Clerk owns that, this app only mirrors plan/status, not payment amounts -- so margin is
+  // only computable for LTD.
+  const ltdUserIdsForCost = [...new Set((ltdPurchases ?? []).map((p) => String(p.user_id)))];
+  let ltdLifetimeCostByUser = new Map<string, number>();
+  if (ltdUserIdsForCost.length > 0) {
+    const { data: ltdLedgerRows, error: ltdLedgerError } = await admin
+      .from("ai_cost_ledger")
+      .select("user_id, estimated_cost_usd")
+      .in("user_id", ltdUserIdsForCost);
+    if (ltdLedgerError) {
+      console.error("Cost Ops: failed to read all-time ai_cost_ledger for LTD cohorts:", ltdLedgerError);
+    } else {
+      const agg = new Map<string, number>();
+      for (const row of ltdLedgerRows ?? []) {
+        const userId = String(row.user_id);
+        agg.set(userId, (agg.get(userId) ?? 0) + (Number(row.estimated_cost_usd) || 0));
+      }
+      ltdLifetimeCostByUser = agg;
+    }
+  }
+
   const offerToRelease = new Map((ltdOffers ?? []).map((o) => [String(o.offer_id), Number(o.release_number)]));
   const cohortAgg = new Map<number, { offerId: string; memberCount: number; revenueCents: number; userIds: Set<string> }>();
   for (const purchase of ltdPurchases ?? []) {
@@ -210,7 +241,7 @@ export async function getCostOpsSummary(filters: CostOpsFilters): Promise<CostOp
   const ltdCohorts: CostOpsCohortRow[] = [...cohortAgg.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([releaseNumber, entry]) => {
-      const costUsd = [...entry.userIds].reduce((sum, userId) => sum + (costByUser.get(userId)?.costUsd ?? 0), 0);
+      const costUsd = [...entry.userIds].reduce((sum, userId) => sum + (ltdLifetimeCostByUser.get(userId) ?? 0), 0);
       const revenueUsd = entry.revenueCents / 100;
       const marginUsd = revenueUsd - costUsd;
       return {

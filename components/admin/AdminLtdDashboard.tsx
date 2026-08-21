@@ -22,6 +22,9 @@ interface PurchaseRow {
   amountPaidCents: number;
   currency: string;
   payerEmail: string | null;
+  previousPlanSlug: string | null;
+  previousSubscriptionId: string | null;
+  subscriptionCancelledAt: string | null;
 }
 
 function formatMoney(cents: number, currency: string): string {
@@ -276,6 +279,7 @@ export function AdminLtdDashboard() {
                       <th className="px-5 py-2">Email</th>
                       <th className="px-5 py-2">Offer</th>
                       <th className="px-5 py-2">Paid</th>
+                      <th className="px-5 py-2">Converted from</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -287,11 +291,14 @@ export function AdminLtdDashboard() {
                         <td className="px-5 py-2.5 text-xs">{p.payerEmail || p.userId}</td>
                         <td className="px-5 py-2.5 text-xs text-slate-400 font-mono">{p.offerId}</td>
                         <td className="px-5 py-2.5 text-xs">{formatMoney(p.amountPaidCents, p.currency)}</td>
+                        <td className="px-5 py-2.5 text-xs text-slate-400">
+                          {p.previousPlanSlug ?? "—"}
+                        </td>
                       </tr>
                     ))}
                     {purchases.length === 0 && (
                       <tr>
-                        <td colSpan={4} className="px-5 py-6 text-center text-sm text-slate-500">
+                        <td colSpan={5} className="px-5 py-6 text-center text-sm text-slate-500">
                           No purchases yet.
                         </td>
                       </tr>

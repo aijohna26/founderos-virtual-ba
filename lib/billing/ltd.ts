@@ -20,10 +20,34 @@ export interface LtdPurchaseRecord {
   amountPaidCents: number;
   currency: string;
   payerEmail: string | null;
+  /**
+   * Subscriber -> Lifetime conversion bookkeeping (see lib/billing/subscriptionConversion.ts).
+   * previousPlanSlug/previousSubscriptionId/subscriptionCancelledAt are null when this member
+   * had no active Clerk Billing subscription at purchase time -- most purchases, since LTD
+   * buyers are usually new, not converting subscribers.
+   */
+  previousPlanSlug: string | null;
+  previousSubscriptionId: string | null;
+  subscriptionCancelledAt: string | null;
 }
 
 export interface LtdOfferAdminRow extends LtdOfferPublicState {
   createdAt: string;
+}
+
+function toPurchaseRecord(row: Record<string, unknown>): LtdPurchaseRecord {
+  return {
+    stripePaymentIntentId: String(row.stripe_payment_intent_id),
+    userId: String(row.user_id),
+    offerId: String(row.offer_id),
+    foundingMemberNumber: Number(row.founding_member_number),
+    amountPaidCents: Number(row.amount_paid_cents),
+    currency: String(row.currency),
+    payerEmail: row.payer_email ? String(row.payer_email) : null,
+    previousPlanSlug: row.previous_plan_slug ? String(row.previous_plan_slug) : null,
+    previousSubscriptionId: row.previous_subscription_id ? String(row.previous_subscription_id) : null,
+    subscriptionCancelledAt: row.subscription_cancelled_at ? String(row.subscription_cancelled_at) : null,
+  };
 }
 
 function toOfferState(data: Record<string, unknown>): LtdOfferPublicState {
@@ -103,15 +127,60 @@ export async function claimLtdOfferSlot(params: {
   }
 
   const row = Array.isArray(data) ? data[0] : data;
-  return {
-    stripePaymentIntentId: String(row.stripe_payment_intent_id),
-    userId: String(row.user_id),
-    offerId: String(row.offer_id),
-    foundingMemberNumber: Number(row.founding_member_number),
-    amountPaidCents: Number(row.amount_paid_cents),
-    currency: String(row.currency),
-    payerEmail: row.payer_email ? String(row.payer_email) : null,
-  };
+  return toPurchaseRecord(row);
+}
+
+/**
+ * Atomically claims the right to run this purchase's subscriber->Lifetime conversion (see
+ * lib/billing/subscriptionConversion.ts): a single conditional UPDATE ... WHERE
+ * conversion_claimed_at IS NULL, so under webhook redelivery only the first caller gets
+ * `true` back. Callers that get `false` must skip conversion entirely -- it was already
+ * handled (or is being handled right now) by an earlier delivery.
+ */
+export async function claimLtdConversionSlot(stripePaymentIntentId: string): Promise<boolean> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return false;
+
+  const { data, error } = await admin
+    .from("ltd_purchases")
+    .update({ conversion_claimed_at: new Date().toISOString() })
+    .eq("stripe_payment_intent_id", stripePaymentIntentId)
+    .is("conversion_claimed_at", null)
+    .select("stripe_payment_intent_id")
+    .maybeSingle();
+
+  if (error) {
+    console.error("Failed to claim LTD conversion slot:", error);
+    return false;
+  }
+  return Boolean(data);
+}
+
+/**
+ * Records what claimLtdConversionSlot's winner actually found/did. Fields are null when the
+ * member had no active Clerk Billing subscription to convert from.
+ */
+export async function recordLtdConversion(params: {
+  stripePaymentIntentId: string;
+  previousPlanSlug: string | null;
+  previousSubscriptionId: string | null;
+  subscriptionCancelledAt: string | null;
+}): Promise<void> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return;
+
+  const { error } = await admin
+    .from("ltd_purchases")
+    .update({
+      previous_plan_slug: params.previousPlanSlug,
+      previous_subscription_id: params.previousSubscriptionId,
+      subscription_cancelled_at: params.subscriptionCancelledAt,
+    })
+    .eq("stripe_payment_intent_id", params.stripePaymentIntentId);
+
+  if (error) {
+    console.error("Failed to record LTD conversion result:", error);
+  }
 }
 
 /**
@@ -128,22 +197,16 @@ export async function getUserLtdPurchase(userId: string): Promise<LtdPurchaseRec
 
   const { data, error } = await admin
     .from("ltd_purchases")
-    .select("stripe_payment_intent_id, user_id, offer_id, founding_member_number, amount_paid_cents, currency, payer_email")
+    .select(
+      "stripe_payment_intent_id, user_id, offer_id, founding_member_number, amount_paid_cents, currency, payer_email, previous_plan_slug, previous_subscription_id, subscription_cancelled_at"
+    )
     .eq("user_id", userId)
     .order("founding_member_number", { ascending: true })
     .limit(1)
     .maybeSingle();
 
   if (error || !data) return null;
-  return {
-    stripePaymentIntentId: String(data.stripe_payment_intent_id),
-    userId: String(data.user_id),
-    offerId: String(data.offer_id),
-    foundingMemberNumber: Number(data.founding_member_number),
-    amountPaidCents: Number(data.amount_paid_cents),
-    currency: String(data.currency),
-    payerEmail: data.payer_email ? String(data.payer_email) : null,
-  };
+  return toPurchaseRecord(data);
 }
 
 // --- Admin-only below: callers must gate these behind lib/admin/auth.ts themselves; nothing
@@ -169,22 +232,16 @@ export async function listLtdPurchases(offerId?: string): Promise<LtdPurchaseRec
 
   let query = admin
     .from("ltd_purchases")
-    .select("stripe_payment_intent_id, user_id, offer_id, founding_member_number, amount_paid_cents, currency, payer_email")
+    .select(
+      "stripe_payment_intent_id, user_id, offer_id, founding_member_number, amount_paid_cents, currency, payer_email, previous_plan_slug, previous_subscription_id, subscription_cancelled_at"
+    )
     .order("founding_member_number", { ascending: false });
   if (offerId) query = query.eq("offer_id", offerId);
 
   const { data, error } = await query;
   if (error || !data) return [];
 
-  return data.map((row) => ({
-    stripePaymentIntentId: String(row.stripe_payment_intent_id),
-    userId: String(row.user_id),
-    offerId: String(row.offer_id),
-    foundingMemberNumber: Number(row.founding_member_number),
-    amountPaidCents: Number(row.amount_paid_cents),
-    currency: String(row.currency),
-    payerEmail: row.payer_email ? String(row.payer_email) : null,
-  }));
+  return data.map(toPurchaseRecord);
 }
 
 /**

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 import { getStripe } from "@/lib/stripe/client";
 import { claimLtdOfferSlot } from "@/lib/billing/ltd";
+import { convertSubscriberToLifetime } from "@/lib/billing/subscriptionConversion";
 
 // Raw Stripe webhook for the one-time Lifetime Deal payment -- separate from
 // /api/webhooks/clerk, which only ever carries Clerk Billing's recurring subscription events
@@ -54,6 +55,14 @@ export async function POST(req: NextRequest) {
         currency: session.currency ?? "usd",
         payerEmail: session.customer_details?.email ?? null,
       });
+
+      // Lifetime access is already granted at this point (isLifetime is derived purely from
+      // the ltd_purchases row claimLtdOfferSlot just wrote), so there's no access gap even if
+      // this next step is slow or fails. If this member had an active recurring subscription,
+      // cancel it now so it never renews -- see subscriptionConversion.ts for why this is
+      // safe to run on every webhook delivery (it's internally idempotent) and why it never
+      // throws back into this catch block.
+      await convertSubscriberToLifetime(userId, paymentIntentId);
     } catch (err) {
       if (err instanceof Error && err.message === "offer_unavailable") {
         // The offer sold out (or was closed) between Checkout Session creation and this

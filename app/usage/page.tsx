@@ -94,6 +94,18 @@ export default async function UsagePage() {
                 <p className="text-xs text-slate-500 font-medium">
                   {isLifetime ? "One-time purchase -- no recurring billing" : "Current plan"}
                 </p>
+                {isLifetime && ltdPurchase?.previousPlanSlug && ltdPurchase.subscriptionCancelledAt && (
+                  <p className="text-[11px] text-slate-400 font-medium mt-0.5">
+                    Converted from {PLAN_LABELS[ltdPurchase.previousPlanSlug] ?? ltdPurchase.previousPlanSlug} on{" "}
+                    {new Date(ltdPurchase.subscriptionCancelledAt).toLocaleDateString("en-US", {
+                      month: "long",
+                      day: "numeric",
+                      year: "numeric",
+                      timeZone: "UTC",
+                    })}
+                    . That subscription won&apos;t renew.
+                  </p>
+                )}
               </div>
             </div>
             {!isLifetime && (

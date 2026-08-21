@@ -99,6 +99,14 @@ export class GeminiLiveService {
   private sessionCutoffTimer: ReturnType<typeof setTimeout> | null = null;
   private idleWarningTimer: ReturnType<typeof setTimeout> | null = null;
   private idleDisconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  // P0 #4: two separate activity clocks, deliberately not conflated. lastUserActivityAt is
+  // the only one the idle/human-presence timer (resetIdleTimer) ever consults -- it moves
+  // only on meaningful final user speech. lastSessionActivityAt moves on any session activity
+  // (Sarah speaking, a tool executing) and is bookkeeping only; nothing downstream may treat
+  // "the session is doing something" as "the founder is still here," since Sarah can keep
+  // narrating or a tool can keep running for a while after someone has actually stepped away.
+  private lastUserActivityAt = 0;
+  private lastSessionActivityAt = 0;
 
   constructor(
     venture: Venture,
@@ -313,6 +321,8 @@ export class GeminiLiveService {
       this.callbacks.onTranscript("user", content.interimInputTranscription.text, false);
     }
     if (content?.inputTranscription?.text) {
+      // The one and only signal that resets the human-presence timer: a final (non-interim)
+      // user transcript. See resetIdleTimer's doc comment for why nothing else does.
       this.resetIdleTimer();
       this.lastFinalUserTranscript = content.inputTranscription.text.trim();
       if (isProposalCancellation(this.lastFinalUserTranscript)) {
@@ -328,7 +338,11 @@ export class GeminiLiveService {
     if (content?.modelTurn?.parts) {
       for (const part of content.modelTurn.parts) {
         if (part.inlineData?.data) {
-          this.resetIdleTimer();
+          // Sarah speaking is session activity, not founder presence -- deliberately does
+          // NOT reset the idle/human-presence timer (see resetIdleTimer's doc comment). A
+          // founder who has stepped away mid-answer shouldn't get their idle clock rearmed
+          // just because Sarah kept talking.
+          this.markSessionActivity();
           this.playPcmChunk(part.inlineData.data);
           this.callbacks.onStateChange("speaking");
         }
@@ -344,7 +358,11 @@ export class GeminiLiveService {
     }
 
     if (message.toolCall?.functionCalls?.length) {
-      this.resetIdleTimer();
+      // Tool execution is session activity, not founder presence -- deliberately does NOT
+      // reset the idle/human-presence timer (see resetIdleTimer's doc comment). A long-running
+      // tool call shouldn't be able to keep a session "not idle" indefinitely while the
+      // founder themselves is gone.
+      this.markSessionActivity();
       this.callbacks.onStateChange("using_tool");
       const functionResponses = message.toolCall.functionCalls.map((call) => {
         const startedAt = performance.now();
@@ -582,14 +600,21 @@ export class GeminiLiveService {
   }
 
   /**
-   * P0 #5: idle detection. (Re)arms on genuine activity only -- a final user transcript, a
-   * tool call, or Sarah actually speaking a turn -- never on interim ASR blips or ambient
-   * audio, so background noise can neither reset this nor be mistaken for the founder still
-   * being present. This also catches the doc's named "stale session" cases (sleeping laptop,
-   * dead network, an abandoned tab) for free: every one of them simply stops producing
-   * activity, so the same clock ends all of them the same way.
+   * P0 #4: human-presence idle detection. (Re)arms on genuine *founder* activity only -- a
+   * final user transcript -- never on interim ASR blips or ambient audio (those never call
+   * this at all), and deliberately never on Sarah speaking or a tool executing either, even
+   * though those do happen during a real session: measuring "the session is active" instead
+   * of "a human is present" was the original bug here, since Sarah narrating a long answer or
+   * a slow tool call could indefinitely paper over a founder who has actually stepped away.
+   * lastUserActivityAt is the one clock this function drives; markSessionActivity() below is
+   * the separate, un-consulted one for everything else. This still catches the doc's named
+   * "stale session" cases (sleeping laptop, dead network, an abandoned tab) for free: every
+   * one of them simply stops producing founder speech, so the same clock ends all of them the
+   * same way.
    */
   private resetIdleTimer(): void {
+    this.lastUserActivityAt = Date.now();
+    this.markSessionActivity();
     if (this.idleWarningTimer) clearTimeout(this.idleWarningTimer);
     if (this.idleDisconnectTimer) clearTimeout(this.idleDisconnectTimer);
     this.idleDisconnectTimer = null;
@@ -620,6 +645,17 @@ export class GeminiLiveService {
     if (this.idleDisconnectTimer) clearTimeout(this.idleDisconnectTimer);
     this.idleWarningTimer = null;
     this.idleDisconnectTimer = null;
+  }
+
+  /**
+   * Records session-wide activity (Sarah speaking, a tool executing) without touching the
+   * idle/human-presence timer -- see resetIdleTimer's doc comment for why those two must stay
+   * separate. Not surfaced anywhere yet; kept as its own timestamp (rather than folded into
+   * lastUserActivityAt) so a future stale-session diagnostic can distinguish "nothing happened
+   * at all" from "the founder went quiet but the session kept working."
+   */
+  private markSessionActivity(): void {
+    this.lastSessionActivityAt = Date.now();
   }
 
   /** Finalizes this session's live_usage_sessions row via the server's own clock. Uses
