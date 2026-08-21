@@ -1,7 +1,7 @@
 import { auth, clerkClient } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { getStripe } from "@/lib/stripe/client";
-import { getActiveLtdOffer } from "@/lib/billing/ltd";
+import { getActiveLtdOffer, getUserLtdPurchase } from "@/lib/billing/ltd";
 
 // Starts a one-time Stripe Checkout for the currently active Lifetime Deal offer. Protected
 // by proxy.ts (not in the public route list) and by the auth() check below, matching the
@@ -15,6 +15,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { error: "Lifetime Deal checkout is not configured", code: "STRIPE_NOT_CONFIGURED" },
       { status: 503 },
+    );
+  }
+
+  // Blocks the common (non-concurrent) case of a founder paying for Lifetime twice -- the
+  // real race-proof guarantee is the unique index on ltd_purchases.user_id underneath this
+  // (see the 20260821100000 migration), which the webhook refunds against if this check is
+  // ever raced by two simultaneous checkout attempts.
+  const existingPurchase = await getUserLtdPurchase(userId);
+  if (existingPurchase) {
+    return NextResponse.json(
+      { error: "You already have a Lifetime membership -- no need to purchase again.", code: "ALREADY_LIFETIME_MEMBER" },
+      { status: 409 },
     );
   }
 

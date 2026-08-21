@@ -117,9 +117,10 @@ export async function claimLtdOfferSlot(params: {
 /**
  * A user's own Lifetime purchase, if any -- safe to call from any authenticated route since
  * it's scoped to the caller-supplied userId (unlike the admin-only listing functions below).
- * A user could in principle hold more than one purchase row (nothing currently prevents a
- * second Stripe payment); this returns the earliest by founding-member number, i.e. the
- * membership they'd have originally been welcomed in on.
+ * At most one row per user_id is actually possible now (see the ltd_purchases_user_unique_idx
+ * migration and claim_ltd_offer_slot's up-front check), but this still orders by
+ * founding-member number ascending and takes the first as defense in depth, in case any row
+ * created before that constraint existed ever left a user with more than one.
  */
 export async function getUserLtdPurchase(userId: string): Promise<LtdPurchaseRecord | null> {
   const admin = getSupabaseAdmin();

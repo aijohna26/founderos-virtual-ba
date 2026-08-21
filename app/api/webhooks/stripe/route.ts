@@ -73,6 +73,24 @@ export async function POST(req: NextRequest) {
             refundErr,
           });
         }
+      } else if (err instanceof Error && err.message === "already_lifetime_member") {
+        // The founder already held a Lifetime membership by the time this payment
+        // completed -- most likely /api/checkout/ltd's own pre-checkout guard was raced
+        // (two tabs) or bypassed some other way. Either way, they've now paid a second time
+        // for something they already have; refund it rather than silently keep the money.
+        console.error("User already has a Lifetime membership -- refunding duplicate payment", {
+          paymentIntentId,
+          offerId,
+          userId,
+        });
+        try {
+          await stripe.refunds.create({ payment_intent: paymentIntentId });
+        } catch (refundErr) {
+          console.error("LTD duplicate-purchase auto-refund failed -- needs manual refund", {
+            paymentIntentId,
+            refundErr,
+          });
+        }
       } else {
         console.error("Stripe webhook: failed to claim LTD offer slot", err);
       }
