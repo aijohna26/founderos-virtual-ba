@@ -1,8 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { LogOut, Plus, Loader2 } from "lucide-react";
+import { Plus, Loader2 } from "lucide-react";
 
 interface OfferRow {
   offerId: string;
@@ -30,7 +29,6 @@ function formatMoney(cents: number, currency: string): string {
 }
 
 export function AdminLtdDashboard() {
-  const router = useRouter();
   const [offers, setOffers] = useState<OfferRow[]>([]);
   const [purchases, setPurchases] = useState<PurchaseRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,13 +57,6 @@ export function AdminLtdDashboard() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     refresh();
   }, [refresh]);
-
-  const handleLogout = async () => {
-    await fetch("/api/admin/logout", { method: "POST" });
-    // Re-run the server component so it re-reads the now-cleared cookie and renders the
-    // login form instead of the dashboard.
-    router.refresh();
-  };
 
   const handleCreateOffer = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -118,25 +109,15 @@ export function AdminLtdDashboard() {
   const totalRevenueCents = purchases.reduce((sum, p) => sum + p.amountPaidCents, 0);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 px-4 sm:px-8 py-10">
-      <div className="max-w-5xl mx-auto space-y-8">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-black">LTD Admin</h1>
-            <p className="text-xs text-slate-400 font-medium">
-              {purchases.length} founding members · {formatMoney(totalRevenueCents, "usd")} total revenue
-            </p>
-          </div>
-          <button
-            onClick={handleLogout}
-            className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            Sign out
-          </button>
-        </div>
+    <div className="space-y-8">
+      <div>
+        <h2 className="text-lg font-black">LTD</h2>
+        <p className="text-xs text-slate-400 font-medium">
+          {purchases.length} founding members · {formatMoney(totalRevenueCents, "usd")} total revenue
+        </p>
+      </div>
 
-        {actionError && (
+      {actionError && (
           <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-xs font-semibold text-rose-300">
             {actionError}
           </div>
@@ -321,7 +302,6 @@ export function AdminLtdDashboard() {
             </section>
           </>
         )}
-      </div>
     </div>
   );
 }

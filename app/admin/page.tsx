@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { ADMIN_SESSION_COOKIE, getAdminConfig, verifyAdminSessionToken } from "@/lib/admin/auth";
 import { AdminLoginForm } from "@/components/admin/AdminLoginForm";
-import { AdminLtdDashboard } from "@/components/admin/AdminLtdDashboard";
+import { AdminDashboard } from "@/components/admin/AdminDashboard";
 
 // This route is deliberately exempt from Clerk's proxy.ts protection (it's in the public
 // list) -- ADMIN_USER/ADMIN_PASS from .env.local is its own, separate gate, checked here via
@@ -26,5 +26,5 @@ export default async function AdminPage() {
     return <AdminLoginForm />;
   }
 
-  return <AdminLtdDashboard />;
+  return <AdminDashboard />;
 }
