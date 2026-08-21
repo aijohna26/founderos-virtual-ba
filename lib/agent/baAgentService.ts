@@ -179,6 +179,20 @@ export class BAAgentService {
           break;
         }
 
+        // UI-only: closes the ticket detail modal the founder was just looking at. Doesn't
+        // touch the venture at all -- distinct from move_ticket, which is the tool that
+        // actually changes a ticket's status/column. Named deliberately unlike anything a
+        // founder would mean by "close the ticket" (mark it done/closed), which stays
+        // move_ticket's job; this only closes the on-screen detail view.
+        case "close_ticket_view": {
+          result = {
+            toolName,
+            success: true,
+            message: "Closed the ticket detail view.",
+          };
+          break;
+        }
+
         // 3. create_ticket
         case "create_ticket":
         case "create_card": {

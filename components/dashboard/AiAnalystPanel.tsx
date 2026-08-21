@@ -521,6 +521,13 @@ export function AiAnalystPanel({
           detail: { ventureId: venture.id, ticketId: data.openTicketId },
         }));
       }
+      // Mirrors the open-card wiring above, for the opposite request ("close the modal").
+      // BoardTab listens for this and clears its selectedCard.
+      if (data.closeTicketView) {
+        window.dispatchEvent(new CustomEvent("founderally:close-card", {
+          detail: { ventureId: venture.id },
+        }));
+      }
 
       let currentVenture: Venture = { ...venture };
       const toolResults: ToolExecutionResult[] = [];
@@ -727,6 +734,12 @@ export function AiAnalystPanel({
           if (toolName === "get_ticket" && result.success && typeof result.data?.id === "string") {
             window.dispatchEvent(new CustomEvent("founderally:open-card", {
               detail: { ventureId: ventureRef.current.id, ticketId: result.data.id },
+            }));
+          }
+          // Same wiring for the opposite request ("close the modal") on the Live path.
+          if (toolName === "close_ticket_view" && result.success) {
+            window.dispatchEvent(new CustomEvent("founderally:close-card", {
+              detail: { ventureId: ventureRef.current.id },
             }));
           }
         },

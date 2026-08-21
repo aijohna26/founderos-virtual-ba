@@ -334,10 +334,9 @@ export function AdminCostOpsDashboard() {
               </h3>
               <p className="mt-0.5 text-[10px] text-slate-500">
                 Always this period, regardless of the date filter above -- this reflects the same
-                cap that&apos;s actually enforced right now. Non-Lifetime accounts are shown against
-                the Free-tier allowance as a simplification (per-account Clerk plan resolution
-                isn&apos;t wired up here yet), so a paying subscriber&apos;s real allowance may be higher
-                than shown.
+                cap that&apos;s actually enforced right now. Plan is resolved from each account&apos;s
+                real subscription state (Lifetime, then their active Clerk plan), falling back
+                to Free only if no active subscription record exists locally yet.
               </p>
             </div>
             <div className="overflow-x-auto">

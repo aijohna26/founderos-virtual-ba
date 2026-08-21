@@ -86,6 +86,21 @@ export function BoardTab({ venture, onUpdateVenture, pendingOpenCardId, onPendin
     onPendingCardOpened?.();
   }, [pendingOpenCardId, venture.columns, onPendingCardOpened]);
 
+  // Closes the card detail modal when Sarah resolves a "close the modal"/"close it" request
+  // (see AiAnalystPanel's "founderally:close-card" dispatch, mirroring open-card above). Kept
+  // local to BoardTab rather than lifted to the dashboard shell like pendingOpenCardId is --
+  // closing only makes sense while this modal is already open, which requires BoardTab (and
+  // its selectedCard state) to already be mounted, so there's no cross-tab timing gap to close.
+  useEffect(() => {
+    const handleCloseCard = (event: Event) => {
+      const detail = (event as CustomEvent<{ ventureId?: string }>).detail;
+      if (detail?.ventureId !== venture.id) return;
+      setSelectedCard(null);
+    };
+    window.addEventListener("founderally:close-card", handleCloseCard);
+    return () => window.removeEventListener("founderally:close-card", handleCloseCard);
+  }, [venture.id]);
+
   const getTagBadgeStyle = (category: KanbanCard["category"]) => {
     switch (category) {
       case "Feature":

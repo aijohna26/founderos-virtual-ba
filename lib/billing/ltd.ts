@@ -114,6 +114,37 @@ export async function claimLtdOfferSlot(params: {
   };
 }
 
+/**
+ * A user's own Lifetime purchase, if any -- safe to call from any authenticated route since
+ * it's scoped to the caller-supplied userId (unlike the admin-only listing functions below).
+ * A user could in principle hold more than one purchase row (nothing currently prevents a
+ * second Stripe payment); this returns the earliest by founding-member number, i.e. the
+ * membership they'd have originally been welcomed in on.
+ */
+export async function getUserLtdPurchase(userId: string): Promise<LtdPurchaseRecord | null> {
+  const admin = getSupabaseAdmin();
+  if (!admin) return null;
+
+  const { data, error } = await admin
+    .from("ltd_purchases")
+    .select("stripe_payment_intent_id, user_id, offer_id, founding_member_number, amount_paid_cents, currency, payer_email")
+    .eq("user_id", userId)
+    .order("founding_member_number", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !data) return null;
+  return {
+    stripePaymentIntentId: String(data.stripe_payment_intent_id),
+    userId: String(data.user_id),
+    offerId: String(data.offer_id),
+    foundingMemberNumber: Number(data.founding_member_number),
+    amountPaidCents: Number(data.amount_paid_cents),
+    currency: String(data.currency),
+    payerEmail: data.payer_email ? String(data.payer_email) : null,
+  };
+}
+
 // --- Admin-only below: callers must gate these behind lib/admin/auth.ts themselves; nothing
 // here checks who's asking, same trust boundary as the rest of this file (server-only,
 // service-role Supabase access).

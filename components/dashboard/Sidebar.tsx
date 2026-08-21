@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   Home,
@@ -21,7 +21,8 @@ import {
   X,
   Sparkles,
   LogOut,
-  CreditCard
+  CreditCard,
+  Gauge
 } from "lucide-react";
 import { SignOutButton, UserButton, useAuth, useUser } from "@clerk/nextjs";
 import { Venture } from "@/lib/store/ventureStore";
@@ -60,10 +61,40 @@ export function Sidebar({
   // `has` reflects the active session's real Clerk Billing plan claim -- it replaces a
   // previously hardcoded "Solo Tier Active" label that never actually reflected what the
   // signed-in user was subscribed to.
-  const { has } = useAuth();
+  const { has, userId } = useAuth();
   const isVenturePro = has?.({ plan: "venture_pro" }) ?? false;
   const isSoloFounder = !isVenturePro && (has?.({ plan: "solo_founder" }) ?? false);
-  const planLabel = isVenturePro ? "Venture Pro" : isSoloFounder ? "Solo Founder" : "Free plan";
+
+  // Lifetime (LTD) isn't a Clerk Billing plan -- it's a one-time Stripe purchase recorded in
+  // our own Supabase table -- so has() alone can never surface it. Fetched separately from a
+  // thin server bridge (see app/api/usage/plan) rather than left unreflected, which is what
+  // this badge did before: a founding member would otherwise see "Free plan" here even after
+  // paying for Lifetime access.
+  const [ltdPlan, setLtdPlan] = useState<{ isLifetime: boolean; foundingMemberNumber: number | null } | null>(null);
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
+    fetch("/api/usage/plan")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data) setLtdPlan(data);
+      })
+      .catch(() => {
+        /* best-effort -- badge just falls back to the Clerk plan claims below */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  const isLifetime = ltdPlan?.isLifetime ?? false;
+  const planLabel = isLifetime
+    ? "Lifetime"
+    : isVenturePro
+    ? "Venture Pro"
+    : isSoloFounder
+    ? "Solo Founder"
+    : "Free plan";
   const currentVenture = ventures.find((v) => v.id === activeVentureId) || ventures[0];
 
   // Compute real sprint progress
@@ -260,21 +291,24 @@ export function Sidebar({
           </div>
         </div>
 
-        {/* Section 4: Plan status + upgrade CTA, reflecting the real Clerk Billing plan */}
+        {/* Section 4: Plan status + upgrade CTA, reflecting the real plan (Clerk Billing, or Lifetime) */}
         <Link
-          href={isVenturePro ? "/account" : "/pricing"}
+          href={isLifetime ? "/usage" : isVenturePro ? "/account" : "/pricing"}
           onClick={() => onMobileClose?.()}
           className="p-3 rounded-2xl bg-gradient-to-br from-blue-50 to-indigo-50/60 border border-blue-200/80 flex flex-col items-center gap-1.5 text-center group hover:border-blue-300 transition-all block"
         >
           <div>
             <div className="text-xs font-bold text-slate-900 group-hover:text-blue-600 transition-colors leading-snug">
               {planLabel}
+              {isLifetime && ltdPlan?.foundingMemberNumber !== null && ltdPlan?.foundingMemberNumber !== undefined && (
+                <span className="ml-1 text-amber-600">#{String(ltdPlan.foundingMemberNumber).padStart(3, "0")}</span>
+              )}
             </div>
             <div className="text-[10px] text-slate-500 font-medium leading-snug">
-              {isVenturePro ? "Manage billing" : "Current plan"}
+              {isLifetime ? "View usage" : isVenturePro ? "Manage billing" : "Current plan"}
             </div>
           </div>
-          {!isVenturePro && (
+          {!isVenturePro && !isLifetime && (
             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-600 text-white shadow-2xs uppercase">
               Upgrade
             </span>
@@ -303,6 +337,15 @@ export function Sidebar({
           >
             <CreditCard className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             <span>Billing</span>
+          </Link>
+          <Link
+            href="/usage"
+            onClick={() => onMobileClose?.()}
+            className="flex items-center gap-1.5 whitespace-nowrap hover:text-slate-900 transition-colors cursor-pointer"
+            title="See your Live Voice usage this month"
+          >
+            <Gauge className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+            <span>Usage</span>
           </Link>
           <button
             onClick={() => {

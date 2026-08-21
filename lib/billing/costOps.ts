@@ -5,6 +5,33 @@ import { getSupabaseAdmin } from "@/lib/supabase/server";
 import { LIVE_MINUTES_BY_PLAN, MAX_LIVE_SESSION_MINUTES } from "@/lib/config/liveUsageConfig";
 import { getCurrentPeriodStart } from "@/lib/billing/liveUsage";
 
+/**
+ * Every non-Lifetime user's current Clerk Billing plan, keyed by user id. Sourced from
+ * billing_subscriptions -- the local mirror kept in sync by app/api/webhooks/clerk/route.ts
+ * on every subscription.* event -- rather than calling Clerk's Backend Billing API per user
+ * (still experimental/beta, and would mean one network round trip per account shown here).
+ * One row can appear more than once across a plan change (upserted by subscription_id, not
+ * user_id), so this keeps only each user's most-recently-updated *active* row.
+ */
+async function activePlanByUserId(admin: NonNullable<ReturnType<typeof getSupabaseAdmin>>): Promise<Map<string, string>> {
+  const result = new Map<string, string>();
+  const { data, error } = await admin
+    .from("billing_subscriptions")
+    .select("user_id, plan_slug, status, updated_at")
+    .eq("status", "active")
+    .order("updated_at", { ascending: false });
+  if (error) {
+    console.error("Cost Ops: failed to read billing_subscriptions:", error);
+    return result;
+  }
+  for (const row of data ?? []) {
+    const userId = String(row.user_id);
+    if (result.has(userId)) continue; // already saw this user's most recent active row
+    if (row.plan_slug) result.set(userId, String(row.plan_slug));
+  }
+  return result;
+}
+
 export interface CostOpsFilters {
   from?: string;
   to?: string;
@@ -199,16 +226,16 @@ export async function getCostOpsSummary(filters: CostOpsFilters): Promise<CostOp
 
   // Accounts approaching their Live allowance -- always the *current* period regardless of
   // the dashboard's own date filter, since that's what actually gates access right now.
-  // Simplification worth knowing: LTD members get the real 300-minute Lifetime allowance
-  // (resolvable directly from ltd_purchases); everyone else is shown against the free_user
-  // allowance as a stand-in, because resolving another user's actual Clerk Billing plan
-  // requires Clerk's Backend API per user, which isn't wired up here yet -- so a paying
-  // subscriber's true (larger) allowance isn't reflected, only the most conservative one.
+  // Plan resolution mirrors resolveLiveAllowance()'s own precedence: Lifetime (via
+  // ltd_purchases) wins first since it isn't a Clerk Billing plan and would never show up as
+  // a subscription; everyone else resolves against their real active plan from
+  // billing_subscriptions, falling back to free_user only when no active subscription row
+  // exists locally (new signup, or the webhook hasn't landed yet).
   const periodStart = getCurrentPeriodStart();
-  const { data: currentPeriodSessions } = await admin
-    .from("live_usage_sessions")
-    .select("user_id, started_at, ended_at")
-    .gte("started_at", periodStart);
+  const [{ data: currentPeriodSessions }, subscriptionPlanByUser] = await Promise.all([
+    admin.from("live_usage_sessions").select("user_id, started_at, ended_at").gte("started_at", periodStart),
+    activePlanByUserId(admin),
+  ]);
   const currentPeriodMinutesByUser = new Map<string, number>();
   for (const row of currentPeriodSessions ?? []) {
     const startedAt = Date.parse(String(row.started_at));
@@ -222,7 +249,7 @@ export async function getCostOpsSummary(filters: CostOpsFilters): Promise<CostOp
   const ltdUserIds = new Set((ltdPurchases ?? []).map((p) => String(p.user_id)));
   const capRows: CostOpsCapRow[] = [];
   for (const [userId, usedMinutes] of currentPeriodMinutesByUser.entries()) {
-    const planSlug = ltdUserIds.has(userId) ? "lifetime" : "free_user";
+    const planSlug = ltdUserIds.has(userId) ? "lifetime" : subscriptionPlanByUser.get(userId) ?? "free_user";
     const allowanceMinutes = LIVE_MINUTES_BY_PLAN[planSlug] ?? LIVE_MINUTES_BY_PLAN.free_user;
     const percentUsed = allowanceMinutes > 0 ? (usedMinutes / allowanceMinutes) * 100 : 0;
     if (percentUsed >= 80) {
