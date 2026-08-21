@@ -19,9 +19,10 @@ export async function POST(request: NextRequest) {
   }
 
   // Blocks the common (non-concurrent) case of a founder paying for Lifetime twice -- the
-  // real race-proof guarantee is the unique index on ltd_purchases.user_id underneath this
-  // (see the 20260821100000 migration), which the webhook refunds against if this check is
-  // ever raced by two simultaneous checkout attempts.
+  // real race-proof guarantee is claim_ltd_offer_slot()'s advisory locking plus the unique
+  // index on ltd_purchases.user_id underneath this (see the 20260821100000 migration), which
+  // the webhook refunds against if this check is ever raced by two simultaneous checkout
+  // attempts.
   const existingPurchase = await getUserLtdPurchase(userId);
   if (existingPurchase) {
     return NextResponse.json(
