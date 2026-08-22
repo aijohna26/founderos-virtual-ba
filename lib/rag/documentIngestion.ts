@@ -112,10 +112,28 @@ export async function ingestDocument(doc: IngestibleDocument): Promise<Ingestion
     // ingestion_status only ever answers "are the stored chunks current."
     const embeddingStatus: "ready" | "partial" | "failed" =
       chunks.length === 0 || embeddedCount === chunks.length ? "ready" : embeddedCount === 0 ? "failed" : "partial";
+    // embedding_indexed_at is deliberately *not* set to null on a partial/failed run -- a
+    // prior real success shouldn't be erased just because the most recent attempt fell short.
+    // embedding_error is a short diagnostic, not a raw stack trace, so it's safe to surface in
+    // admin/AI Ops directly.
+    const embeddingUpdate: Record<string, unknown> = {
+      ingestion_status: "ready",
+      ingested_at: new Date().toISOString(),
+      embedding_status: embeddingStatus,
+    };
+    if (embeddingStatus === "ready") {
+      embeddingUpdate.embedding_indexed_at = new Date().toISOString();
+      embeddingUpdate.embedding_error = null;
+    } else if (embeddingStatus === "partial") {
+      embeddingUpdate.embedding_indexed_at = new Date().toISOString();
+      embeddingUpdate.embedding_error = `${chunks.length - embeddedCount} of ${chunks.length} chunks failed to embed.`;
+    } else {
+      embeddingUpdate.embedding_error = `All ${chunks.length} chunks failed to embed.`;
+    }
 
     const { error: readyError } = await admin
       .from("venture_documents")
-      .update({ ingestion_status: "ready", ingested_at: new Date().toISOString(), embedding_status: embeddingStatus })
+      .update(embeddingUpdate)
       .eq("id", doc.id)
       .eq("user_id", doc.userId);
     if (readyError) throw new Error(`failed to mark ingestion ready: ${readyError.message}`);
@@ -126,7 +144,11 @@ export async function ingestDocument(doc: IngestibleDocument): Promise<Ingestion
     console.error("Document ingestion failed:", { documentId: doc.id, userId: doc.userId, error: message });
     await admin
       .from("venture_documents")
-      .update({ ingestion_status: "failed", embedding_status: "failed" })
+      .update({
+        ingestion_status: "failed",
+        embedding_status: "failed",
+        embedding_error: `Ingestion failed before embedding could run: ${message}`,
+      })
       .eq("id", doc.id)
       .eq("user_id", doc.userId);
     return { ok: false, error: message };
