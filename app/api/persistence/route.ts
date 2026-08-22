@@ -1,5 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
+import { ingestDocument } from "@/lib/rag/documentIngestion";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 type Resource = "ventures" | "commitments" | "learnings" | "memories" | "documents" | "operations";
@@ -219,6 +220,22 @@ export async function POST(request: Request) {
       updated_at: new Date().toISOString(),
     }, { onConflict: "owner_user_id,venture_id,user_id" });
   }
+
+  // P1 #6: (re-)chunk this document for retrieval right after every save, so a document's
+  // chunks are never more stale than its last saved content. Awaited (not fire-and-forget)
+  // so ingestion_status is settled by the time this responds, but never lets an ingestion
+  // failure turn into a save failure -- the document itself is already committed above
+  // regardless of what happens here.
+  if (body.resource === "documents") {
+    await ingestDocument({
+      id: String(data.id),
+      userId: String(data.user_id),
+      ventureId: String(data.venture_id),
+      title: String(data.title),
+      content: String(data.content),
+    });
+  }
+
   return Response.json({ record: data });
 }
 

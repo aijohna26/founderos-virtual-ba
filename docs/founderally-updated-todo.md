@@ -120,19 +120,49 @@ This replaces the older TODO priorities. The LTD concurrency architecture is now
 
 ## P1 — Company Knowledge / RAG
 
-- [ ] **6. Build proper document ingestion**
+- [x] **6. Build proper document ingestion**
   - Extract document content.
   - Normalise it.
   - Chunk intelligently.
   - Preserve document ID, title, section/page and venture ID.
   - Store ingestion status.
   - Re-index when a document changes.
+  - _Implemented: `lib/rag/documentChunker.ts` (pure, deterministic paragraph/sentence-aware
+    chunking with heading detection and boundary overlap -- 12 unit tests in
+    `tests/document-chunker.test.ts`, all passing; two real bugs found and fixed during
+    testing: a section boundary was being ignored by the small-trailing-chunk merge, and
+    `str.slice(-0)` returning the whole string instead of empty, which let overlap silently
+    double a hard-wrapped chunk's size) and `lib/rag/documentIngestion.ts` (persistence
+    orchestration: replace-in-full re-chunk, `ingestion_status` tracked through
+    pending→processing→ready/failed). Wired into `app/api/persistence/route.ts` so every
+    document save re-ingests synchronously. New `document_chunks` table + status/hash columns
+    + a DB trigger flagging re-ingestion need, via
+    `supabase/migrations/20260822090000_document_ingestion.sql` -- not yet applied to your
+    live Supabase project. "Extract" is a no-op today: documents are pasted/typed text, not
+    uploaded files, so there's nothing to extract from a file format yet -- if file upload
+    (PDF/DOCX) is wanted later, extraction becomes a real step ahead of chunking.
+    No embeddings yet -- that's item #7, next.
 
-- [ ] **7. Add embeddings/vector retrieval**
+- [x] **7. Add embeddings/vector retrieval**
   - Create embeddings for chunks.
   - Store them in the existing data architecture where appropriate.
   - Restrict retrieval by `ventureId`.
   - Never allow cross-venture document leakage.
+  - _Implemented: `lib/rag/embeddings.ts` (batched `gemini-embedding-2` calls, 1536 dims --
+    chosen over the model's 3072 default because pgvector's ANN index types cap at 2000 dims,
+    see `lib/config/ragConfig.ts` -- cost recorded via a new `recordDocumentProcessingCost`,
+    which had been scaffolded in the cost ledger since P0 #6 but never actually used until
+    now). Wired into `ingestDocument` so every save embeds its new chunks. New
+    `match_document_chunks` SQL function (venture *and* user scoped, both required, not just
+    ventureId -- see its own comment) via
+    `supabase/migrations/20260822100000_document_chunk_embeddings.sql` -- not yet applied to
+    your live Supabase project. `lib/rag/retrieval.ts` wraps it as `searchDocumentChunks()`
+    for item #8 to call. Real Postgres+pgvector integration tests in
+    `tests/document-retrieval.test.ts` (4 scenarios) explicitly prove the no-cross-venture-leak
+    property, not just review it; had to switch the test harness's Postgres image to
+    `pgvector/pgvector:pg16` (see `tests/db/testDb.ts`) since this migration needs the
+    extension. No ANN index yet (exact scan is fine, and more accurate, at current data scale
+    -- comment in the migration says when to add one).
 
 - [ ] **8. Build semantic company-knowledge retrieval**
   - Retrieve only relevant chunks for a question.

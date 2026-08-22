@@ -16,7 +16,12 @@ import { Pool } from "pg";
 // always have it running.
 
 const MIGRATIONS_DIR = path.resolve(__dirname, "../../supabase/migrations");
-const IMAGE = "postgres:16-alpine";
+// pgvector, not stock postgres: 20260822100000_document_chunk_embeddings.sql needs the
+// `vector` extension, which plain postgres:16-alpine doesn't ship. This is the official
+// pgvector image (postgres:16 + the extension preinstalled) -- every migration still applies
+// against real Postgres exactly as it would on Supabase (which also ships pgvector), this
+// image just has the extension available for `create extension if not exists vector` to find.
+const IMAGE = "pgvector/pgvector:pg16";
 
 export interface TestDb {
   pool: Pool;

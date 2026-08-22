@@ -1,7 +1,12 @@
 import "server-only";
 
 import { getSupabaseAdmin } from "@/lib/supabase/server";
-import { estimateLiveCostUsd, estimateTextCostUsd, estimateTtsCostUsd } from "@/lib/config/aiPricingConfig";
+import {
+  estimateEmbeddingCostUsd,
+  estimateLiveCostUsd,
+  estimateTextCostUsd,
+  estimateTtsCostUsd,
+} from "@/lib/config/aiPricingConfig";
 
 export type AiInteractionType = "text_chat" | "live_voice" | "tts" | "document_processing" | "background_job";
 
@@ -105,6 +110,38 @@ export async function recordTtsCost(params: RecordAiCostBase & {
     });
   } catch (err) {
     console.error("recordTtsCost failed:", err);
+  }
+}
+
+/**
+ * P1 #7: cost of embedding a document's chunks for RAG retrieval (lib/rag/embeddings.ts).
+ * `units` is the chunk count -- documentProcessingUnits was already scaffolded on this table
+ * for exactly this kind of "how much stuff did we process" figure, previously unused since
+ * nothing recorded a document_processing entry until this.
+ */
+export async function recordDocumentProcessingCost(params: RecordAiCostBase & {
+  model: string;
+  units: number;
+  inputTokens: number;
+}): Promise<void> {
+  try {
+    await insertLedgerEntry({
+      userId: params.userId ?? null,
+      ventureId: params.ventureId ?? null,
+      planSlug: params.planSlug ?? null,
+      sessionId: params.sessionId ?? null,
+      model: params.model,
+      interactionType: "document_processing",
+      inputTokens: params.inputTokens,
+      outputTokens: null,
+      liveInputMinutes: null,
+      liveOutputMinutes: null,
+      sessionDurationSeconds: null,
+      documentProcessingUnits: params.units,
+      estimatedCostUsd: estimateEmbeddingCostUsd(params.inputTokens),
+    });
+  } catch (err) {
+    console.error("recordDocumentProcessingCost failed:", err);
   }
 }
 

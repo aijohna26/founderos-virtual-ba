@@ -14,6 +14,10 @@ export const GEMINI_CONFIG = {
   // Dedicated text-to-speech fallback model (not the Live agent).
   AUDIO_MODEL: "gemini-3.1-flash-tts-preview",
 
+  // P1 #7 (docs/founderally-updated-todo.md): document-chunk embeddings for RAG retrieval.
+  // See lib/rag/embeddings.ts.
+  EMBEDDING_MODEL: "gemini-embedding-2",
+
   // Supported Prebuilt Gemini Neural Voices
   VOICES: {
     DEFAULT_ADVISOR: "Sulafat", // Warm strategic co-founder

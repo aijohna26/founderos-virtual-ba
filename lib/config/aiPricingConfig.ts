@@ -11,8 +11,11 @@
 // gemini-3.7-flash's input/output rates are scheduled to double on 2027-01-01 ($0.75->$1.50
 // in, $3.75->$7.50 out per the pricing page) -- these are the current (pre-increase) rates;
 // whoever's still on this file after that date should update them and re-verify.
+//
+// gemini-embedding-2's $0.20/1M input-token rate (below) was checked the same way on
+// 2026-08-22.
 export const PRICING_VERIFIED = true;
-export const PRICING_LAST_UPDATED = "2026-08-21";
+export const PRICING_LAST_UPDATED = "2026-08-22";
 
 export interface ModelPricing {
   /** USD per 1,000,000 input tokens. */
@@ -55,6 +58,14 @@ export const LIVE_AUDIO_USD_PER_MINUTE = {
 // audio-capable Gemini models, since TTS's own page gives no other conversion. Re-derive if
 // Google ever publishes a TTS-specific rate instead: 25 * 60 / 1_000_000 * 20.00 = 0.03.
 export const TTS_AUDIO_USD_PER_MINUTE = 0.03;
+
+// gemini-embedding-2 (P1 #7): text input only, per the pricing page ($0.20/1M tokens) --
+// embeddings have no output tokens to price.
+export const EMBEDDING_INPUT_PER_MILLION_USD = 0.20;
+
+export function estimateEmbeddingCostUsd(inputTokens: number): number {
+  return (inputTokens / 1_000_000) * EMBEDDING_INPUT_PER_MILLION_USD;
+}
 
 export function estimateTextCostUsd(model: string, inputTokens: number, outputTokens: number): number {
   const pricing = TEXT_MODEL_PRICING[model] ?? DEFAULT_TEXT_MODEL_PRICING;
