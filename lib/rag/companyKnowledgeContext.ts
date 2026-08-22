@@ -1,7 +1,7 @@
 import "server-only";
 
 import { searchDocumentChunks } from "@/lib/rag/retrieval";
-import { shouldAttemptCompanyKnowledgeRetrieval } from "@/lib/rag/retrievalGate";
+import { classifyContextNeeds } from "@/lib/agent/contextClassifier";
 
 export interface CompanyKnowledgeSource {
   documentId: string;
@@ -23,9 +23,10 @@ const NO_EVIDENCE_TEXT = "No company documents were retrieved as relevant to thi
 
 /**
  * Replaces the old "inject every saved document into every prompt" pattern: gates on
- * shouldAttemptCompanyKnowledgeRetrieval, then retrieves only the chunks that actually match
- * this specific question (via match_document_chunks' venture-scoped similarity search),
- * instead of every document up to some fixed count/length. Used by the text chat path
+ * classifyContextNeeds (P1 #11's real context classifier/router -- lib/rag/retrievalGate.ts's
+ * placeholder from #8 is retired now that this exists), then retrieves only the chunks that
+ * actually match this specific question (via match_document_chunks' venture-scoped similarity
+ * search), instead of every document up to some fixed count/length. Used by the text chat path
  * directly; the Live path uses the same underlying searchDocumentChunks through the
  * search_company_knowledge tool instead (see app/api/rag/search/route.ts), since Live's
  * per-turn tool-calling model fits that surface better than a single pre-built context.
@@ -35,7 +36,7 @@ export async function retrieveCompanyKnowledgeContext(params: {
   ventureId: string;
   query: string;
 }): Promise<CompanyKnowledgeContext> {
-  if (!shouldAttemptCompanyKnowledgeRetrieval(params.query)) {
+  if (!classifyContextNeeds(params.query).needsDocumentRetrieval) {
     return { attempted: false, promptText: NO_EVIDENCE_TEXT, sources: [] };
   }
 

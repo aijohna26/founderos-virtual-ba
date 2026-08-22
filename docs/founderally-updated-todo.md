@@ -229,10 +229,22 @@ This replaces the older TODO priorities. The LTD concurrency architecture is now
 
 ## P1 — Context Intelligence
 
-- [ ] **11. Build a context classifier/router**
+- [x] **11. Build a context classifier/router**
   - Determine what information a request actually requires before assembling the AI context.
+  - _Implemented: `lib/agent/contextClassifier.ts`, a pure/synchronous heuristic classifier
+    (no model call) replacing `lib/rag/retrievalGate.ts`'s placeholder from #8 outright, as
+    planned. Scope decision, made explicit in the file's own header: most of #12's categories
+    (board_ticket, current_sprint, commitments, team_member, recent_activity, learnings,
+    previous_decisions) are already cheap, always-loaded local data with no separate fetch
+    cost, so this classifier's actual gating effect today is still narrow -- it only decides
+    `needsDocumentRetrieval` (documents/customer_research), the one category with a real
+    marginal cost (an embedding call + DB round trip). Trimming the cheap categories from the
+    prompt is a real answer-quality regression risk for an uncertain token-cost payoff, so it's
+    named as a deliberate non-goal here, not silently skipped. 9 unit tests in
+    `tests/context-classifier.test.ts`, including #13's three examples verified directly
+    against the real function.
 
-- [ ] **12. Support context categories**
+- [x] **12. Support context categories**
   - Board/ticket only.
   - Current sprint.
   - Commitments.
@@ -243,16 +255,32 @@ This replaces the older TODO priorities. The LTD concurrency architecture is now
   - Previous decisions.
   - Customer research.
   - Full business synthesis.
+  - _All ten are real `ContextCategory` values in `lib/agent/contextClassifier.ts`'s taxonomy
+    (built alongside #11, same file) with their own detection rule and test coverage. Only
+    documents/customer_research currently drive different behavior (see #11's note); the rest
+    are classified but not yet used to change what gets assembled._
 
-- [ ] **13. Avoid unnecessary RAG**
+- [x] **13. Avoid unnecessary RAG**
   - `"Move ticket 43 to Done"` should not retrieve business documents.
   - `"What is blocking us?"` should primarily inspect board/blockers/dependencies.
   - `"Should we target agencies or accountants?"` should retrieve relevant company/customer evidence.
+  - _All three are this item's own examples, and all three are now asserted directly against
+    `classifyContextNeeds()` in `tests/context-classifier.test.ts` -- not just reasoned about,
+    checked. Board/ticket data was already always available locally (no separate "inspect"
+    step needed); what #11/#13 actually added is that document retrieval no longer fires for
+    the first case and does fire for the third._
 
-- [ ] **14. Improve recommendation evidence**
+- [x] **14. Improve recommendation evidence**
   - Sarah should be able to explain why she recommends something.
   - Prefer venture evidence over generic startup advice.
   - Explicitly identify uncertainty when evidence is insufficient.
+  - _System-prompt instruction added to both `app/api/ai-analyst/route.ts` and
+    `lib/agent/geminiLiveConfig.ts`: state the reasoning behind a recommendation, prefer this
+    venture's own evidence over generic advice and say explicitly when falling back to
+    generic advice instead, and say plainly when evidence is thin/conflicting rather than
+    recommending with false confidence. Prompt-only change -- there's no way to automatically
+    verify a model actually follows this, so treat it as directional, not guaranteed; worth
+    spot-checking against real conversations._
 
 ---
 
