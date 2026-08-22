@@ -14,16 +14,40 @@ export interface RetrievedChunk {
   similarity: number;
 }
 
+// Review follow-up (docs/founderally-rag-requested-changes.md, P0 #3 "Make Retrieval Failures
+// Observable"): this used to collapse every one of these into a bare []. Sarah still degrades
+// gracefully either way (callers never need a separate error branch to keep working), but
+// "nothing relevant exists" and "retrieval infrastructure is broken" are different facts the
+// system needs to be able to tell apart -- for admin/telemetry visibility, and so a caller can
+// choose different framing (e.g. never claim "no company evidence exists" when the truth is
+// "evidence may exist but retrieval failed").
+export type RetrievalStatus =
+  | "success"
+  | "no_match"
+  | "embedding_unavailable"
+  | "database_unavailable"
+  | "retrieval_error";
+
+export interface RetrievalResult {
+  status: RetrievalStatus;
+  chunks: RetrievedChunk[];
+  /** Present on embedding_unavailable/database_unavailable/retrieval_error. Diagnostic only --
+   * callers must never surface this string directly to a founder (see companyKnowledgeContext.ts). */
+  error?: string;
+}
+
 /**
  * Venture-scoped semantic search over document_chunks (P1 #7). Never allows cross-venture
  * leakage: both ventureId and userId are passed straight through to match_document_chunks,
  * which filters on both server-side -- see that function's own comment for why both, not just
  * ventureId, are required, rather than trusting every call site to remember the filter.
  *
- * Returns [] (never null, never throws) on any failure -- not configured, no Gemini key,
- * embedding failure, or a query error -- so callers can treat "no results" uniformly without
- * a separate error branch. Retrieval coming up empty must never break the caller's flow; it
- * just means nothing gets cited as evidence for this turn.
+ * Never throws -- every failure mode (not configured, no Gemini key, embedding failure, a
+ * query error) resolves to a RetrievalResult with an appropriate status and chunks: [], not an
+ * exception. Callers that only care about "did I get anything back" can still just check
+ * result.chunks; callers that care about *why* (telemetry, admin visibility, honest framing to
+ * the founder) have result.status to distinguish "genuinely nothing relevant" from
+ * "infrastructure failed and we don't actually know."
  */
 export async function searchDocumentChunks(params: {
   userId: string;
@@ -31,12 +55,14 @@ export async function searchDocumentChunks(params: {
   query: string;
   matchCount?: number;
   minSimilarity?: number;
-}): Promise<RetrievedChunk[]> {
+}): Promise<RetrievalResult> {
   const admin = getSupabaseAdmin();
-  if (!admin) return [];
+  if (!admin) return { status: "database_unavailable", chunks: [], error: "Supabase is not configured." };
 
   const queryEmbedding = await embedQueryText(params.query);
-  if (!queryEmbedding) return [];
+  if (!queryEmbedding) {
+    return { status: "embedding_unavailable", chunks: [], error: "Query embedding failed or GEMINI_API_KEY is not configured." };
+  }
 
   const { data, error } = await admin.rpc("match_document_chunks", {
     p_venture_id: params.ventureId,
@@ -48,10 +74,10 @@ export async function searchDocumentChunks(params: {
 
   if (error) {
     console.error("Document chunk retrieval failed:", error);
-    return [];
+    return { status: "retrieval_error", chunks: [], error: error.message };
   }
 
-  return (data ?? []).map((row: Record<string, unknown>) => ({
+  const chunks: RetrievedChunk[] = (data ?? []).map((row: Record<string, unknown>) => ({
     id: String(row.id),
     documentId: String(row.document_id),
     title: String(row.title),
@@ -60,4 +86,6 @@ export async function searchDocumentChunks(params: {
     content: String(row.content),
     similarity: Number(row.similarity),
   }));
+
+  return { status: chunks.length > 0 ? "success" : "no_match", chunks };
 }

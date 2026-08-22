@@ -788,6 +788,16 @@ export function AiAnalystPanel({
           setVoiceState("idle");
           setMicWarning("Ended the call after a while with no response -- I've saved where we got to. Start a new call whenever you're ready.");
         },
+        onConversationEnded: () => {
+          // Sarah's own reply read as a natural sign-off ("talk to you tomorrow", etc.) and
+          // nobody kept talking through the grace window -- GeminiLiveService already
+          // disconnected itself; this just reflects that in the UI instead of leaving the
+          // call showing "Listening..." after a conversation that's actually already over.
+          setIsDailyCallActive(false);
+          setIsSpeakingAI(false);
+          setVoiceState("idle");
+          setMicWarning("Wrapped up the call -- I've saved everything we covered. Start a new call whenever you're ready.");
+        },
       },
       advisor,
       `Start our conversation now with the most useful thing to raise first for ${ventureRef.current.name}, given the current sprint context.`
@@ -842,7 +852,7 @@ export function AiAnalystPanel({
         <div className="text-left">
           <div className="text-xs font-bold text-slate-900 group-hover:text-blue-600 transition-colors flex items-center gap-1">
             <span>AI Business Analyst</span>
-            <span className="text-[9px] px-1 rounded bg-blue-100 text-blue-700 font-extrabold">Gemini</span>
+            <span className="text-[9px] px-1 rounded bg-blue-100 text-blue-700 font-extrabold">AI</span>
           </div>
           <div className="text-[10px] text-slate-500 font-medium flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -863,7 +873,7 @@ export function AiAnalystPanel({
               {activeWorkspace === "Board" ? "Board Co-Pilot" : "AI BA Co-Pilot"}
             </h2>
             <span className="text-[9px] font-black px-1.5 py-0.2 rounded-md bg-blue-100 text-blue-700">
-              Gemini
+              AI
             </span>
           </div>
           <div className="flex items-center gap-1 text-[10px] text-slate-500 font-medium mt-0.5">
@@ -1062,7 +1072,7 @@ export function AiAnalystPanel({
                     </span>
                     <span className="block truncate text-[10px] text-slate-500">{candidate.title}</span>
                     <span className="mt-0.5 block text-[9px] font-semibold text-blue-600">
-                      Gemini {candidate.voiceName} · {candidate.voiceCharacter}
+                      {candidate.voiceName} · {candidate.voiceCharacter}
                     </span>
                   </span>
                 </button>
@@ -1073,7 +1083,7 @@ export function AiAnalystPanel({
           <div className="border-t border-slate-100 bg-slate-50/80 p-3">
             <label htmlFor="project-ba-voice" className="mb-1.5 flex items-center justify-between text-[10px] font-bold text-slate-700">
               <span>Voice for {venture.name}</span>
-              <span className="font-semibold text-blue-600">30 Gemini voices</span>
+              <span className="font-semibold text-blue-600">30 AI voices</span>
             </label>
             <select
               id="project-ba-voice"
@@ -1088,7 +1098,7 @@ export function AiAnalystPanel({
               ))}
             </select>
             <p className="mt-1.5 text-[9px] leading-relaxed text-slate-500">
-              Applied to Gemini Live and server TTS fallback for this project only.
+              Applied to Live voice and server TTS fallback for this project only.
             </p>
           </div>
         </div>
@@ -1379,7 +1389,7 @@ export function AiAnalystPanel({
             <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" />
             <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
             <span className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
-            <span className="text-[11px] font-semibold text-slate-400 ml-1">Gemini AI is analyzing...</span>
+            <span className="text-[11px] font-semibold text-slate-400 ml-1">AI is analyzing...</span>
           </div>
         )}
 
@@ -1420,7 +1430,7 @@ export function AiAnalystPanel({
                     {venture.name} Database Memory
                   </h3>
                   <p className="text-xs text-slate-400">
-                    Facts and context Gemini references during calls and analyses.
+                    Facts and context your AI advisor references during calls and analyses.
                   </p>
                 </div>
               </div>

@@ -31,7 +31,14 @@ The current RAG foundation is strong enough to build on. The goal now is **not t
 
 # P0 — Separate Document and Embedding Status
 
-- [ ] **2. Split document ingestion state from embedding/indexing state**
+- [x] **2. Split document ingestion state from embedding/indexing state**
+  - _Implemented: `embedding_status` (pending/ready/partial/failed) already existed;
+    `20260822120000_document_embedding_observability.sql` adds `embedding_indexed_at` (last
+    successful run, never cleared by a later failure) and `embedding_error` (short diagnostic,
+    safe for admin display). `lib/rag/documentIngestion.ts` populates both on every outcome.
+    Not yet done: surfacing this in an actual admin/AI Ops UI -- there's no admin documents
+    view today (only Cost Ops and LTD), so that's new UI work, tracked separately, not bundled
+    into this schema/backend change._
 
 Current behaviour can mark a document as `ready` even if embedding fails.
 
@@ -81,7 +88,20 @@ ready
 
 # P0 — Make Retrieval Failures Observable
 
-- [ ] **3. Stop collapsing every RAG failure into an empty result**
+- [x] **3. Stop collapsing every RAG failure into an empty result**
+  - _Implemented: `lib/rag/retrieval.ts`'s `searchDocumentChunks` now returns
+    `RetrievalResult { status, chunks, error? }` with exactly the five statuses named in this
+    item, instead of a bare `[]`. `lib/rag/companyKnowledgeContext.ts` maps that down to a
+    caller-facing `EvidenceStatus` (`with_evidence`/`no_match`/`retrieval_unavailable`) and,
+    critically, never lets the raw `error` string reach the model or founder -- only a generic
+    "search wasn't available, evidence may still exist" framing does, on both text
+    (`app/api/ai-analyst/route.ts`, new `evidenceStatus` field in the response) and Live
+    (`search_company_knowledge`'s tool result `message`, which I found was being silently
+    dropped before reaching the model at all -- fixed alongside this). Every retrieval attempt
+    (success, no-match, or failure) now logs to `ai_operation_logs` via a new
+    `lib/agent/aiOperationsLogServer.ts` (the existing `AIOperationsLogger` is client-only and
+    couldn't be called from this server-side code) -- basic health visibility now, full P1 #4
+    telemetry (latency breakdowns, rates, dashboards) still to come._
 
 Current retrieval behaviour returns `[]` for:
 
@@ -574,13 +594,13 @@ Do not tune these values only by intuition.
 - [x] Context classifier exists
 - [x] Pure board commands can avoid RAG
 - [x] Recommendation grounding instructions added
+- [x] Separate embedding/index status (schema + backend; no admin UI yet)
+- [x] Retrieval failures observable (RetrievalStatus/EvidenceStatus + basic AI Ops logging)
 
 ## Still Needs Improvement
 
-- [ ] Production migrations verified
-- [ ] Separate embedding/index status
-- [ ] Retrieval failures observable
-- [ ] RAG telemetry
+- [ ] Production migrations verified (blocked on DB access -- see below)
+- [ ] Full RAG telemetry (latency breakdowns, rates, dashboards -- basic logging now exists)
 - [ ] More precise retrieval gating
 - [ ] Context categories controlling actual prompt assembly
 - [ ] Broader structured provenance

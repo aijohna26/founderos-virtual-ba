@@ -48,7 +48,7 @@ export function HelpSupportModal({ isOpen, onClose }: HelpSupportModalProps) {
               <span>How do 2-Way Voice Standups work?</span>
             </div>
             <p className="text-[11px] text-slate-600 leading-relaxed">
-              Click the <strong>Daily Call</strong> button (or unmute the mic in the right AI Co-Pilot panel). Google Gemini will speak aloud, review in-progress tickets, and take live board actions based on your voice.
+              Click the <strong>Daily Call</strong> button (or unmute the mic in the right AI Co-Pilot panel). Your AI advisor will speak aloud, review in-progress tickets, and take live board actions based on your voice.
             </p>
           </div>
 
@@ -68,7 +68,7 @@ export function HelpSupportModal({ isOpen, onClose }: HelpSupportModalProps) {
               <span>How to auto-generate acceptance criteria?</span>
             </div>
             <p className="text-[11px] text-slate-600 leading-relaxed">
-              Click any card on your Kanban board, then click <strong>&quot;Generate Criteria with AI&quot;</strong>. Gemini will write a user story and extract bulleted acceptance criteria checkboxes.
+              Click any card on your Kanban board, then click <strong>&quot;Generate Criteria with AI&quot;</strong>. Your AI advisor will write a user story and extract bulleted acceptance criteria checkboxes.
             </p>
           </div>
 

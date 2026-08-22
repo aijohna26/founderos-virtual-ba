@@ -702,8 +702,6 @@ Log:
 * stand-up prepared
 * errors
 
-This is important for XPRIZE evidence.
-
 ---
 
 ## Step 25 — Add a simple AI Operations screen

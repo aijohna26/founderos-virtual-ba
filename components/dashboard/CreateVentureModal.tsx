@@ -320,7 +320,7 @@ export function CreateVentureModal({
                   <span>Clean Slate (Empty Board)</span>
                 </div>
                 <p className="text-[11px] text-slate-500 mt-1 leading-snug">
-                  Start fresh with 0 cards. Build tickets with Gemini as you converse.
+                  Start fresh with 0 cards. Build tickets with your AI advisor as you converse.
                 </p>
               </button>
 

@@ -199,6 +199,9 @@ export function StandupTab({
         onIdleDisconnect: () => {
           endCallAutomatically("Ended the stand-up after a while with no response -- I've saved where we got to.");
         },
+        onConversationEnded: () => {
+          endCallAutomatically("Wrapped up the stand-up -- I've saved everything we covered.");
+        },
       },
       selectedPersona
     );
@@ -241,7 +244,7 @@ export function StandupTab({
     VoiceEngine.unlockAudio();
     setSessionState("speaking");
     VoiceEngine.speak(
-      `Hello! I'm ${selectedPersona.name}, your ${selectedPersona.title}. My Gemini ${selectedPersona.voiceName} voice is ready for our daily stand-up.`,
+      `Hello! I'm ${selectedPersona.name}, your ${selectedPersona.title}. My ${selectedPersona.voiceName} voice is ready for our daily stand-up.`,
       selectedPersona.voiceName,
       () => {
         setSessionState("speaking");

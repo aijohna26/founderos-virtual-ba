@@ -20,7 +20,9 @@ import {
   Loader2,
   Timer,
   History,
-  CircleDot
+  CircleDot,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
 import { KanbanCard, CardChecklistItem, Venture, VentureStore } from "@/lib/store/ventureStore";
 import { VoiceEngine } from "@/lib/voice/voiceEngine";
@@ -144,13 +146,27 @@ export function CardDetailModal({
   const [voiceTranscript, setVoiceTranscript] = useState("");
   const [isStructuringVoice, setIsStructuringVoice] = useState(false);
 
+  // Ticket history pagination -- resets for free on every new event (see below).
+  const [historyPage, setHistoryPage] = useState(0);
+
   // Calculate checklist progress
   const totalItems = checklists.length;
   const completedItems = checklists.filter((i) => i.done).length;
   const checklistPercent = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
   const inProgressAgeDays = columnKey === "in_progress" ? getInProgressAgeDays(card) : null;
   const inProgressAgeLabel = formatInProgressAge(inProgressAgeDays);
-  const ticketHistory = getTicketActivity(venture, card.id).slice(0, 8);
+  // Newest-first, paginated 3 at a time rather than a flat slice(0, 8) that hid anything
+  // older than 8 events with no way to reach it. historyPage resets for free on every new
+  // event: BoardTab remounts this modal (see its `key`, which includes the latest
+  // ticketActivity id) whenever a new history entry lands, which is exactly when "back to
+  // page 1, showing the newest 3" is the right behavior anyway.
+  const allTicketHistory = getTicketActivity(venture, card.id);
+  const HISTORY_PAGE_SIZE = 3;
+  const historyPageCount = Math.max(1, Math.ceil(allTicketHistory.length / HISTORY_PAGE_SIZE));
+  const ticketHistory = allTicketHistory.slice(
+    historyPage * HISTORY_PAGE_SIZE,
+    historyPage * HISTORY_PAGE_SIZE + HISTORY_PAGE_SIZE,
+  );
 
   const handleSaveAll = (overrideCol?: keyof Venture["columns"]) => {
     const nextCol = overrideCol || targetCol;
@@ -846,7 +862,7 @@ Please write out all criteria completely without truncation.`,
                   <History className="w-3.5 h-3.5" />
                   <span>Ticket history</span>
                 </div>
-                <span className="text-[10px] font-bold text-slate-400">{ticketHistory.length}</span>
+                <span className="text-[10px] font-bold text-slate-400">{allTicketHistory.length}</span>
               </div>
               {ticketHistory.length > 0 ? (
                 <div className="relative space-y-0 before:absolute before:left-[5px] before:top-2 before:bottom-2 before:w-px before:bg-slate-200">
@@ -873,6 +889,31 @@ Please write out all criteria completely without truncation.`,
                 <p className="text-[10px] leading-relaxed text-slate-400">
                   New changes will appear here as the board and your BA update this ticket.
                 </p>
+              )}
+              {historyPageCount > 1 && (
+                <div className="flex items-center justify-between pt-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setHistoryPage((page) => Math.max(0, page - 1))}
+                    disabled={historyPage === 0}
+                    className="flex items-center gap-1 text-[10px] font-bold text-slate-500 hover:text-slate-900 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-slate-500 transition-colors"
+                  >
+                    <ChevronLeft className="w-3 h-3" />
+                    Newer
+                  </button>
+                  <span className="text-[10px] font-semibold text-slate-400">
+                    Page {historyPage + 1} of {historyPageCount}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setHistoryPage((page) => Math.min(historyPageCount - 1, page + 1))}
+                    disabled={historyPage >= historyPageCount - 1}
+                    className="flex items-center gap-1 text-[10px] font-bold text-slate-500 hover:text-slate-900 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:text-slate-500 transition-colors"
+                  >
+                    Older
+                    <ChevronRight className="w-3 h-3" />
+                  </button>
+                </div>
               )}
             </div>
 

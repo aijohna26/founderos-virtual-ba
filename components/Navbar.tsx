@@ -81,7 +81,7 @@ export function Navbar() {
                   </div>
                   <div>
                     <div className="text-xs font-bold text-slate-900 group-hover:text-blue-600">Daily Voice Standup</div>
-                    <div className="text-[11px] text-slate-500 font-normal">2-way live voice calls with Gemini AI</div>
+                    <div className="text-[11px] text-slate-500 font-normal">2-way live voice calls with your AI advisor</div>
                   </div>
                 </Link>
 
@@ -224,7 +224,7 @@ export function Navbar() {
                     <Cpu className="w-4 h-4" />
                   </div>
                   <div>
-                    <div className="text-xs font-bold text-slate-900 group-hover:text-blue-600">Google Gemini Architecture</div>
+                    <div className="text-xs font-bold text-slate-900 group-hover:text-blue-600">Real-Time AI Architecture</div>
                     <div className="text-[11px] text-slate-500 font-normal">Real-time reasoning & voice engine</div>
                   </div>
                 </Link>

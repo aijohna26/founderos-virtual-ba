@@ -56,7 +56,7 @@ export default function Home() {
 
                 {/* Subtitle */}
                 <p className="text-base sm:text-lg text-slate-600 font-normal leading-relaxed">
-                  Stop building features in the dark. FounderAlly runs daily voice standups, manages your Kanban sprints, de-risks critical hypotheses, and drafts executive PRDs powered by Gemini.
+                  Stop building features in the dark. FounderAlly runs daily voice standups, manages your Kanban sprints, de-risks critical hypotheses, and drafts executive PRDs powered by advanced AI.
                 </p>
 
                 {/* Key Pillars */}
@@ -172,7 +172,7 @@ export default function Home() {
                 </div>
                 <h3 className="text-lg font-bold text-slate-900">Daily Voice Standup</h3>
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  Start your morning talking to Gemini AI. Review sprint velocity, talk through blockers, and brainstorm strategy out loud.
+                  Start your morning talking to your AI Business Analyst. Review sprint velocity, talk through blockers, and brainstorm strategy out loud.
                 </p>
               </div>
 
@@ -183,7 +183,7 @@ export default function Home() {
                 </div>
                 <h3 className="text-lg font-bold text-slate-900">Autonomous Board Sync</h3>
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  Gemini autonomously creates Kanban tickets, writes testable acceptance criteria checklists, and updates priorities in real-time.
+                  Your AI Analyst autonomously creates Kanban tickets, writes testable acceptance criteria checklists, and updates priorities in real-time.
                 </p>
               </div>
 
@@ -216,7 +216,7 @@ export default function Home() {
                   Daily Voice Calls with Your Principal AI Analyst
                 </h3>
                 <p className="text-slate-600 leading-relaxed">
-                  No more typing into blank prompts. Have live, 2-way spoken conversations with Gemini about customer friction, market alternatives, and sprint priorities.
+                  No more typing into blank prompts. Have live, 2-way spoken conversations with your AI advisor about customer friction, market alternatives, and sprint priorities.
                 </p>
                 <ul className="space-y-2 text-sm text-slate-700 font-medium">
                   <li className="flex items-center gap-2">
@@ -235,7 +235,7 @@ export default function Home() {
                     <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center font-bold">🎙️</div>
                     <div>
                       <div className="font-bold text-sm">Morning Founder Standup</div>
-                      <div className="text-xs text-blue-200">Connected with Gemini AI</div>
+                      <div className="text-xs text-blue-200">Connected with your AI advisor</div>
                     </div>
                   </div>
                   <span className="px-2.5 py-1 rounded-full bg-emerald-400/20 text-emerald-300 text-xs font-bold border border-emerald-400/30">Live Audio</span>
@@ -374,7 +374,7 @@ export default function Home() {
               Democratizing Executive Business Analysis for Every Founder
             </h2>
             <p className="text-slate-300 text-base leading-relaxed">
-              FounderAlly was built to give early-stage founders the strategic power of a seasoned Principal Business Analyst and agile co-founder. Powered by Google Gemini, FounderAlly bridges the gap between vision, customer validation, and sprint execution.
+              FounderAlly was built to give early-stage founders the strategic power of a seasoned Principal Business Analyst and agile co-founder. Powered by advanced AI, FounderAlly bridges the gap between vision, customer validation, and sprint execution.
             </p>
             <div className="pt-4">
               <Link

@@ -38,7 +38,7 @@ export function RequirementsTab({ venture }: RequirementsTabProps) {
       description: "Automated ticket structuring, acceptance criteria generation, and live sprint velocity tracking.",
       requirements: [
         { id: "FR-4", text: "5-column Kanban board with real-time drag-and-drop state sync.", status: "Done" },
-        { id: "FR-5", text: "Gemini AI auto-generation of testable acceptance criteria with checklists.", status: "Done" },
+        { id: "FR-5", text: "AI auto-generation of testable acceptance criteria with checklists.", status: "Done" },
         { id: "FR-6", text: "1-click export to CSV (Jira/Trello) and Executive PRD (Markdown).", status: "Done" },
       ]
     },

@@ -15,6 +15,7 @@ export interface TicketMutationAction {
   assigneeIds?: string[];
   dueDate?: string;
   linkedAssumptionId?: string;
+  blockedReason?: string;
   toColumn?: keyof Venture["columns"];
 }
 
@@ -51,6 +52,9 @@ export function describeTicketMutation(action: TicketMutationAction, venture: Ve
   if (action.priority) changes.push(`Set priority to ${action.priority}`);
   if (action.category) changes.push(`Set category to ${action.category}`);
   if (action.dueDate !== undefined) changes.push(action.dueDate ? `Set due date to ${action.dueDate}` : "Clear due date");
+  if (action.blockedReason !== undefined) {
+    changes.push(action.blockedReason ? `Set blocked reason to "${action.blockedReason}"` : "Clear blocked reason");
+  }
   if (action.linkedAssumptionId !== undefined) {
     const assumption = venture.assumptions?.find((item) => item.id === action.linkedAssumptionId);
     changes.push(action.linkedAssumptionId

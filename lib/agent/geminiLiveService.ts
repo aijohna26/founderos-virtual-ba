@@ -9,6 +9,7 @@ import { MemoryService } from "@/lib/db/memoryService";
 import { buildGeminiLiveConfig } from "@/lib/agent/geminiLiveConfig";
 import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
 import {
+  CLOSING_CUE_GRACE_MS,
   IDLE_DISCONNECT_SECONDS,
   IDLE_SIGNOFF_GRACE_MS,
   IDLE_WARNING_SECONDS,
@@ -16,6 +17,7 @@ import {
   MAX_LIVE_SESSION_MINUTES,
 } from "@/lib/config/liveUsageConfig";
 import { DEFAULT_ADVISOR, type AdvisorPersona } from "@/lib/config/advisorPersonas";
+import { isClosingCue } from "@/lib/agent/conversationClosing";
 import {
   isProposalCancellation,
   isProposalConfirmation,
@@ -46,6 +48,11 @@ export interface GeminiLiveServiceCallbacks {
    * the grace period after it -- distinct from onSessionTimedOut (different reason: absence,
    * not the time cap) and onError (nothing went wrong). */
   onIdleDisconnect: () => void;
+  /** Fired when Sarah's own reply reads as a natural conversational sign-off ("talk to you
+   * tomorrow", etc.) and the founder didn't keep talking through the grace period after it --
+   * distinct from onIdleDisconnect (that's absence/no response at all; this is a completed,
+   * mutually-concluded conversation that simply never got manually ended). */
+  onConversationEnded: () => void;
 }
 
 interface LiveSessionAuthorization {
@@ -106,6 +113,10 @@ export class GeminiLiveService {
   // narrating or a tool can keep running for a while after someone has actually stepped away.
   private lastUserActivityAt = 0;
   private lastSessionActivityAt = 0;
+  // Accumulates Sarah's current turn's transcript chunks (outputTranscription streams them
+  // incrementally); checked against isClosingCue once the turn completes, then cleared.
+  private currentAiTurnText = "";
+  private closingTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     venture: Venture,
@@ -311,6 +322,12 @@ export class GeminiLiveService {
     if (content?.interrupted) {
       this.stopPlayback();
       this.callbacks.onStateChange("listening");
+      // The founder talked over Sarah mid-turn -- whatever she was saying (including a
+      // would-be sign-off) didn't finish and isn't what actually happened, and an interruption
+      // is itself clear evidence the founder is still engaged. Discard the partial turn and
+      // cancel any pending closing-cue disconnect from an earlier turn.
+      this.currentAiTurnText = "";
+      this.cancelClosingDisconnect();
     }
 
     if (content?.interimInputTranscription?.text) {
@@ -329,6 +346,7 @@ export class GeminiLiveService {
     }
     if (content?.outputTranscription?.text) {
       this.callbacks.onTranscript("ai", content.outputTranscription.text, false);
+      this.currentAiTurnText += content.outputTranscription.text;
     }
 
     if (content?.modelTurn?.parts) {
@@ -351,6 +369,14 @@ export class GeminiLiveService {
     if (content?.turnComplete) {
       this.callbacks.onTranscript("ai", "", true);
       this.callbacks.onStateChange("listening");
+      // The agent is not able to close the call on its own -- Sarah says goodbye but the
+      // session just keeps listening. Detect a natural sign-off in what she just finished
+      // saying and arm a graceful auto-disconnect for it (see scheduleClosingDisconnect's own
+      // comment for why this never disconnects immediately).
+      if (isClosingCue(this.currentAiTurnText)) {
+        this.scheduleClosingDisconnect();
+      }
+      this.currentAiTurnText = "";
     }
 
     if (message.toolCall?.functionCalls?.length) {
@@ -386,7 +412,11 @@ export class GeminiLiveService {
           return {
             id: call.id,
             name: call.name,
-            response: { output: { success: true, sources: result.data?.sources ?? [] } },
+            // `message` carries the honest with_evidence/no_match/unavailable framing (see
+            // searchCompanyKnowledge's own comment) -- dropping it here would leave the model
+            // with only a bare source list, unable to tell "nothing relevant" apart from
+            // "search failed," which is exactly the ambiguity this was built to remove.
+            response: { output: { success: true, message: result.message, sources: result.data?.sources ?? [] } },
           };
         }
 
@@ -516,6 +546,11 @@ export class GeminiLiveService {
    * handler -- see app/api/rag/search/route.ts for the actual venture-scoped retrieval.
    * Never throws: a failed search still returns a tool result so the model can tell the
    * founder it couldn't find anything, rather than leaving the tool call hanging.
+   *
+   * P0 #3: the `message` returned distinguishes "genuinely nothing relevant" from "search
+   * wasn't available" -- the model sees this text directly as the tool result, so getting the
+   * framing right here is what stops Sarah from confidently saying "there's no evidence for
+   * that" when the truth is retrieval itself failed.
    */
   private async searchCompanyKnowledge(query: string): Promise<ToolExecutionResult> {
     if (!query.trim()) {
@@ -528,19 +563,33 @@ export class GeminiLiveService {
         body: JSON.stringify({ ventureId: this.venture.id, query }),
       });
       if (!res.ok) {
-        return { toolName: "search_company_knowledge", success: false, message: "Company knowledge search failed.", data: { sources: [] } };
+        return {
+          toolName: "search_company_knowledge",
+          success: false,
+          message: "Company document search is temporarily unavailable. Evidence may exist but could not be checked -- do not say no relevant documents exist; say search wasn't available right now.",
+          data: { sources: [] },
+        };
       }
-      const payload = (await res.json()) as { sources?: Array<{ title: string; section: string | null; content: string; similarity: number }> };
-      const sources = Array.isArray(payload.sources) ? payload.sources : [];
-      return {
-        toolName: "search_company_knowledge",
-        success: true,
-        message: sources.length > 0 ? `Found ${sources.length} relevant document excerpt(s).` : "No relevant company documents found for this question.",
-        data: { sources },
+      const payload = (await res.json()) as {
+        status?: string;
+        sources?: Array<{ title: string; section: string | null; content: string; similarity: number }>;
       };
+      const sources = Array.isArray(payload.sources) ? payload.sources : [];
+      const message =
+        payload.status === "success"
+          ? `Found ${sources.length} relevant document excerpt(s).`
+          : payload.status === "no_match"
+            ? "No relevant company documents found for this question."
+            : "Company document search is temporarily unavailable. Evidence may exist but could not be checked -- do not say no relevant documents exist; say search wasn't available right now.";
+      return { toolName: "search_company_knowledge", success: true, message, data: { sources } };
     } catch (err) {
       console.warn("search_company_knowledge failed:", err);
-      return { toolName: "search_company_knowledge", success: false, message: "Company knowledge search failed.", data: { sources: [] } };
+      return {
+        toolName: "search_company_knowledge",
+        success: false,
+        message: "Company document search is temporarily unavailable. Evidence may exist but could not be checked -- do not say no relevant documents exist; say search wasn't available right now.",
+        data: { sources: [] },
+      };
     }
   }
 
@@ -673,6 +722,10 @@ export class GeminiLiveService {
   private resetIdleTimer(): void {
     this.lastUserActivityAt = Date.now();
     this.markSessionActivity();
+    // A closing cue may have been a false alarm (or the founder changed their mind) -- real
+    // founder speech arriving before the grace period elapses is the strongest possible
+    // signal the call isn't actually over, so cancel the pending auto-disconnect.
+    this.cancelClosingDisconnect();
     if (this.idleWarningTimer) clearTimeout(this.idleWarningTimer);
     if (this.idleDisconnectTimer) clearTimeout(this.idleDisconnectTimer);
     this.idleDisconnectTimer = null;
@@ -703,6 +756,36 @@ export class GeminiLiveService {
     if (this.idleDisconnectTimer) clearTimeout(this.idleDisconnectTimer);
     this.idleWarningTimer = null;
     this.idleDisconnectTimer = null;
+  }
+
+  /**
+   * Arms (doesn't immediately trigger) a disconnect after Sarah's own turn read as a closing
+   * cue (see lib/agent/conversationClosing.ts). Never disconnects out from under still-playing
+   * audio: the delay is however long the already-queued audio has left to play (via
+   * nextPlayTime, the same clock playPcmChunk schedules against) plus CLOSING_CUE_GRACE_MS, so
+   * a founder who keeps talking through that window gets it cancelled by resetIdleTimer above,
+   * and one who doesn't gets the call ended for them instead of it sitting in "Listening..."
+   * indefinitely -- the actual bug this exists to fix.
+   */
+  private scheduleClosingDisconnect(): void {
+    if (this.closingTimer) return; // already armed from an earlier turn this session
+    const remainingPlaybackMs = this.outputAudioContext
+      ? Math.max(0, (this.nextPlayTime - this.outputAudioContext.currentTime) * 1000)
+      : 0;
+    const generation = this.connectGeneration;
+    this.closingTimer = setTimeout(() => {
+      this.closingTimer = null;
+      if (generation !== this.connectGeneration || !this.isConnected) return;
+      this.callbacks.onConversationEnded();
+      this.disconnect();
+    }, remainingPlaybackMs + CLOSING_CUE_GRACE_MS);
+  }
+
+  private cancelClosingDisconnect(): void {
+    if (this.closingTimer) {
+      clearTimeout(this.closingTimer);
+      this.closingTimer = null;
+    }
   }
 
   /**
@@ -766,6 +849,7 @@ export class GeminiLiveService {
     this.isConnected = false;
     this.clearSessionTimeLimits();
     this.clearIdleTimer();
+    this.cancelClosingDisconnect();
     this.stopPlayback();
     try { this.session?.close(); } catch {}
     this.session = null;

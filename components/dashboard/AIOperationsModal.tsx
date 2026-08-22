@@ -63,7 +63,7 @@ export const AIOperationsModal: React.FC<AIOperationsModalProps> = ({
                 </span>
               </h2>
               <p className="text-xs text-slate-400">
-                Auditable tool execution, latency benchmarks, and Gemini model telemetry.
+                Auditable tool execution, latency benchmarks, and AI model telemetry.
               </p>
             </div>
           </div>

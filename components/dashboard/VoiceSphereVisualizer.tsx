@@ -178,7 +178,7 @@ export const VoiceSphereVisualizer: React.FC<VoiceSphereVisualizerProps> = ({
             onClick={() => setShowPersonaPicker(!showPersonaPicker)}
             disabled={isCallActive}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/90 hover:bg-slate-700/90 disabled:cursor-not-allowed disabled:opacity-60 text-slate-200 border border-slate-700 text-xs font-semibold cursor-pointer transition-colors"
-            title={isCallActive ? "End the stand-up before changing advisor" : "Change advisor and Gemini voice"}
+            title={isCallActive ? "End the stand-up before changing advisor" : "Change advisor and voice"}
           >
             <ShieldCheck className="w-3.5 h-3.5 text-blue-400" />
             <span>{persona.style}</span>
@@ -216,7 +216,7 @@ export const VoiceSphereVisualizer: React.FC<VoiceSphereVisualizerProps> = ({
               <Image src={p.avatar} alt="" width={36} height={36} className="h-9 w-9 shrink-0 rounded-full object-cover ring-1 ring-slate-600" />
               <div>
                 <div className="font-semibold text-slate-100">{p.name} · {p.style}</div>
-                <div className="mt-0.5 text-[10px] font-medium text-cyan-300">Gemini {p.voiceName} · {p.voiceCharacter}</div>
+                <div className="mt-0.5 text-[10px] font-medium text-cyan-300">{p.voiceName} · {p.voiceCharacter}</div>
                 <div className="text-[11px] text-slate-400 font-normal">{p.description}</div>
               </div>
             </button>
@@ -269,7 +269,7 @@ export const VoiceSphereVisualizer: React.FC<VoiceSphereVisualizerProps> = ({
           <h3 className="text-sm font-bold text-slate-100">{persona.name}</h3>
           <p className="text-[11px] text-slate-400 max-w-xs">{persona.title}</p>
           <p className="mt-1 text-[10px] font-semibold text-cyan-300">
-            Gemini {persona.voiceName} · {persona.voiceCharacter} voice
+            {persona.voiceName} · {persona.voiceCharacter} voice
           </p>
         </div>
       </div>

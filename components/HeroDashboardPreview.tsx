@@ -189,7 +189,7 @@ export function HeroDashboardPreview() {
                       <span className="text-[8px] font-bold text-slate-600">AI ASSIGNED</span>
                     </div>
                     <p className="text-[11px] font-bold text-slate-900 leading-snug">
-                      Autonomous Ticket Generation via Gemini
+                      Autonomous Ticket Generation via AI
                     </p>
                   </div>
                 </div>
@@ -263,7 +263,7 @@ export function HeroDashboardPreview() {
                 <div className="font-bold text-slate-900 text-[11px]"># EPIC-1: 2-Way Voice Standup</div>
                 <p className="text-[10px] text-slate-600 leading-relaxed font-sans">
                   FR-1: System initiates daily standup call at configured venture time (09:00 AM).
-                  FR-2: Gemini analyzes live board and speaks highest-risk priorities out loud.
+                  FR-2: AI analyzes live board and speaks highest-risk priorities out loud.
                 </p>
                 <div className="text-[9px] text-blue-600 font-bold font-sans">✓ Exported to Jira / Markdown</div>
               </div>
@@ -303,7 +303,7 @@ export function HeroDashboardPreview() {
 
               <div>
                 <h4 className="text-xs font-black text-slate-900">AI Business Analyst</h4>
-                <p className="text-[10px] text-slate-500 font-medium">Powered by Google Gemini</p>
+                <p className="text-[10px] text-slate-500 font-medium">Powered by advanced AI</p>
               </div>
 
               {/* Audio Controls Mock */}

@@ -32,3 +32,9 @@ export const IDLE_DISCONNECT_SECONDS = 45;
 // Brief pause after the "ending the call" sign-off line is sent, so it has time to actually
 // start playing before the connection closes underneath it.
 export const IDLE_SIGNOFF_GRACE_MS = 4000;
+
+// How long to wait, after Sarah's own turn reads as a closing cue ("talk to you tomorrow",
+// etc.) and its audio has finished playing, before actually disconnecting -- see
+// lib/agent/conversationClosing.ts. Gives the founder a real window to keep talking if the
+// call isn't actually over; any further speech before this fires cancels the disconnect.
+export const CLOSING_CUE_GRACE_MS = 6000;

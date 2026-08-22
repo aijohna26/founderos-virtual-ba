@@ -292,6 +292,26 @@ test("ticket proposal summaries cover editable ticket details without executing 
   assert.equal(proposal.changes.some((change) => change.includes("acceptance")), true);
 });
 
+test("ticket proposal summaries cover blocked-reason edits, not just the other fields", () => {
+  const venture = activityVenture();
+  const settingReason = createPendingTicketProposal(
+    [{ type: "update_ticket", blockedReason: "Waiting on API keys from the payment provider" }],
+    { id: "t1", title: "Payment webhook" },
+    venture,
+  );
+  assert.equal(
+    settingReason.changes.some((change) => change.includes("blocked reason") && change.includes("payment provider")),
+    true,
+  );
+
+  const clearingReason = createPendingTicketProposal(
+    [{ type: "update_ticket", blockedReason: "" }],
+    { id: "t1", title: "Payment webhook" },
+    venture,
+  );
+  assert.equal(clearingReason.changes.some((change) => change.includes("Clear blocked reason")), true);
+});
+
 test("spoken confirmations and cancellations are intentionally narrow", () => {
   assert.equal(isProposalConfirmation("yes"), true);
   assert.equal(isProposalConfirmation("go ahead"), true);

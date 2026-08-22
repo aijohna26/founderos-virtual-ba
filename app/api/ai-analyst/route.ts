@@ -324,7 +324,12 @@ export async function POST(req: NextRequest) {
     const companyKnowledge =
       mode !== "draft_only" && userId && typeof venture?.id === "string"
         ? await retrieveCompanyKnowledgeContext({ userId, ventureId: venture.id, query: message })
-        : { attempted: false, promptText: "No company documents were retrieved as relevant to this specific question.", sources: [] };
+        : {
+            attempted: false,
+            evidenceStatus: "no_match" as const,
+            promptText: "Company document search was not attempted for this message (it didn't need it).",
+            sources: [],
+          };
 
     const getColItems = (col: any) => {
       if (!col) return [];
@@ -603,6 +608,11 @@ RECOMMENDATIONS (P1 #14): whenever you recommend a specific action or direction,
             // P1 #9: structured provenance for whatever evidence was actually retrieved this
             // turn, so the client can show what backed the answer instead of just the prose.
             sources: companyKnowledge.sources,
+            // P0 #3: with_evidence / no_match / retrieval_unavailable -- lets the client (or
+            // a future admin view) distinguish "nothing relevant exists" from "evidence may
+            // exist but retrieval infrastructure failed," which look identical in `sources`
+            // alone (both empty).
+            evidenceStatus: companyKnowledge.evidenceStatus,
           });
         }
       } catch (sdkError) {

@@ -8,11 +8,11 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://getfounderally.com"),
   title: "FounderAlly — Your AI Business Analyst for Every Founder Decision",
   description:
-    "FounderAlly is your elite AI Business Analyst and autonomous venture co-pilot. Real 2-way voice conversations with Gemini, autonomous Kanban board management, customer discovery, and hypothesis testing.",
-  keywords: ["AI Business Analyst", "Founder Co-Pilot", "Gemini XPRIZE", "Kanban Board AI", "Customer Discovery", "Startup Validation"],
+    "FounderAlly is your elite AI Business Analyst and autonomous venture co-pilot. Real 2-way voice conversations with your AI advisor, autonomous Kanban board management, customer discovery, and hypothesis testing.",
+  keywords: ["AI Business Analyst", "Founder Co-Pilot", "Kanban Board AI", "Customer Discovery", "Startup Validation"],
   openGraph: {
     title: "FounderAlly — Your AI Business Analyst",
-    description: "Transform your startup ideas into validated execution with Gemini AI.",
+    description: "Transform your startup ideas into validated execution with AI.",
     url: "https://getfounderally.com",
     siteName: "FounderAlly",
     type: "website",
@@ -20,7 +20,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "FounderAlly — AI Business Analyst for Founders",
-    description: "Real 2-way voice conversations with Gemini AI on business strategy and board execution.",
+    description: "Real 2-way voice conversations with your AI advisor on business strategy and board execution.",
   },
   icons: {
     icon: [

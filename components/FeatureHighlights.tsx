@@ -8,7 +8,7 @@ export function FeatureHighlights() {
     {
       icon: PhoneCall,
       title: "2-Way Voice Standup",
-      desc: "Daily morning debriefs spoken aloud with Gemini AI",
+      desc: "Daily morning debriefs spoken aloud with your AI advisor",
       badge: "Hands-Free",
       color: "text-blue-600 bg-blue-50 border-blue-200/80"
     },
@@ -28,7 +28,7 @@ export function FeatureHighlights() {
     },
     {
       icon: Zap,
-      title: "Google Gemini Engine",
+      title: "Real-Time AI Engine",
       desc: "Sub-second analytical reasoning tailored to your market",
       badge: "State of the Art",
       color: "text-amber-600 bg-amber-50 border-amber-200/80"
