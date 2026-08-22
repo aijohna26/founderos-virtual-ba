@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { classifyContextNeeds } from "../lib/agent/contextClassifier";
 
-// P1 #11/#13's own three named examples, tested directly against the real classifier.
+// P1 #13's own three named examples, tested directly against the real classifier.
 test("#13 example: 'Move ticket 43 to Done' does not need document retrieval", () => {
   const result = classifyContextNeeds("Move ticket 43 to Done");
   assert.equal(result.categories.has("board_ticket"), true);
-  assert.equal(result.needsDocumentRetrieval, false);
+  assert.equal(result.documentRetrieval, "skip");
 });
 
 test("#13 example: 'What is blocking us?' primarily reads as a board question", () => {
@@ -16,7 +16,7 @@ test("#13 example: 'What is blocking us?' primarily reads as a board question", 
 
 test("#13 example: 'Should we target agencies or accountants?' needs company/customer evidence", () => {
   const result = classifyContextNeeds("Should we target agencies or accountants?");
-  assert.equal(result.needsDocumentRetrieval, true);
+  assert.equal(result.documentRetrieval, "required");
 });
 
 test("classifies board/ticket operations", () => {
@@ -40,19 +40,40 @@ test("classifies document, decision, customer-research, and business-synthesis q
 });
 
 test("a pure board command (no other signal) skips document retrieval; anything else attempts it", () => {
-  assert.equal(classifyContextNeeds("Move ticket 12 to backlog").needsDocumentRetrieval, false);
-  assert.equal(classifyContextNeeds("Close the modal").needsDocumentRetrieval, false);
-  // Board_ticket *plus* another signal is no longer a "pure" board command.
-  assert.equal(classifyContextNeeds("Does the PRD mention this ticket's requirements?").needsDocumentRetrieval, true);
+  assert.equal(classifyContextNeeds("Move ticket 12 to backlog").documentRetrieval, "skip");
+  assert.equal(classifyContextNeeds("Close the modal").documentRetrieval, "skip");
+  // board_ticket *plus* another evidence-seeking signal is no longer a pure board command.
+  assert.equal(classifyContextNeeds("Does the PRD mention this ticket's requirements?").documentRetrieval, "required");
 });
 
 test("skips retrieval for messages too short to be a real question", () => {
-  assert.equal(classifyContextNeeds("yes").needsDocumentRetrieval, false);
-  assert.equal(classifyContextNeeds("").needsDocumentRetrieval, false);
-  assert.equal(classifyContextNeeds("   ").needsDocumentRetrieval, false);
+  assert.equal(classifyContextNeeds("yes").documentRetrieval, "skip");
+  assert.equal(classifyContextNeeds("").documentRetrieval, "skip");
+  assert.equal(classifyContextNeeds("   ").documentRetrieval, "skip");
 });
 
-test("an unclassified but substantial message still attempts retrieval (permissive by design)", () => {
+test("an unclassified but substantial message is optional, not skipped (permissive by design)", () => {
   const result = classifyContextNeeds("How does this compare to what similar companies have done?");
-  assert.equal(result.needsDocumentRetrieval, true);
+  assert.equal(result.documentRetrieval, "optional");
+});
+
+// P1 #5's own example sets, tested verbatim against the real classifier.
+test("#5 Skip examples: pure board/ticket operations, including assignment with no 'ticket' wording", () => {
+  assert.equal(classifyContextNeeds("Move ticket 43 to Done.").documentRetrieval, "skip");
+  assert.equal(classifyContextNeeds("Close the ticket.").documentRetrieval, "skip");
+  assert.equal(classifyContextNeeds("Assign this to Priya.").documentRetrieval, "skip");
+  assert.equal(classifyContextNeeds("What cards are blocked?").documentRetrieval, "skip");
+});
+
+test("#5 Optional examples: general planning questions with no explicit evidence signal", () => {
+  assert.equal(classifyContextNeeds("What should I work on today?").documentRetrieval, "optional");
+  assert.equal(classifyContextNeeds("Are we on track?").documentRetrieval, "optional");
+  assert.equal(classifyContextNeeds("What is the biggest risk this week?").documentRetrieval, "optional");
+});
+
+test("#5 Required examples: questions that clearly need company-specific evidence", () => {
+  assert.equal(classifyContextNeeds("What did customers say about onboarding?").documentRetrieval, "required");
+  assert.equal(classifyContextNeeds("Should we target agencies or accountants?").documentRetrieval, "required");
+  assert.equal(classifyContextNeeds("What does our PRD say about team permissions?").documentRetrieval, "required");
+  assert.equal(classifyContextNeeds("Why did we decide not to build this?").documentRetrieval, "required");
 });

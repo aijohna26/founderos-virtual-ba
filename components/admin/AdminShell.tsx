@@ -4,7 +4,7 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import { LogOut } from "lucide-react";
 
-export type AdminTab = "ltd" | "cost-ops";
+export type AdminTab = "ltd" | "cost-ops" | "rag-telemetry";
 
 export interface AdminShellProps {
   activeTab: AdminTab;
@@ -15,6 +15,7 @@ export interface AdminShellProps {
 const TABS: Array<{ id: AdminTab; label: string }> = [
   { id: "ltd", label: "LTD" },
   { id: "cost-ops", label: "Cost Ops" },
+  { id: "rag-telemetry", label: "RAG Telemetry" },
 ];
 
 export function AdminShell({ activeTab, onTabChange, children }: AdminShellProps) {

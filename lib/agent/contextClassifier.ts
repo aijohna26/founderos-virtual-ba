@@ -31,16 +31,49 @@ export type ContextCategory =
   | "customer_research"
   | "full_business_synthesis";
 
+// Review follow-up (docs/founderally-rag-requested-changes.md P1 #5 "Improve Retrieval
+// Gating"): a bare boolean collapsed "definitely don't bother" and "might help, might not"
+// into the same "attempt retrieval" bucket, always searching at the same similarity bar
+// either way. Three tiers let those two cases behave differently without becoming
+// aggressively restrictive (the doc's own instruction): `skip` never searches at all;
+// `optional` still searches (cheap -- one embedding call + one DB query, nowhere near the
+// cost of a second full model call) but only injects evidence that clears a *higher*
+// similarity bar, so a marginal/coincidental match doesn't bloat the prompt for a question
+// that's really about board/sprint state anyway; `required` searches at the normal, more
+// generous bar since the question clearly reads as needing company evidence.
+export type DocumentRetrievalTier = "skip" | "optional" | "required";
+
 export interface ContextClassification {
   categories: ReadonlySet<ContextCategory>;
-  /** True when `documents` or `customer_research` applies -- the one category actually gated. */
-  needsDocumentRetrieval: boolean;
+  documentRetrieval: DocumentRetrievalTier;
 }
 
 interface CategoryRule {
   category: ContextCategory;
   pattern: RegExp;
 }
+
+// Kept separate from CATEGORY_RULES on purpose: "is this purely a board/ticket operation"
+// (the skip boundary) is a different question from "which context categories does this
+// message touch" (the general taxonomy), and conflating them made real gaps easy to miss --
+// e.g. "Assign this to Priya" reads as team_member in the taxonomy, not board_ticket, so a
+// tier derived from categories alone would have searched for it even though it's exactly the
+// skip case #5's own examples name. Anchored on the actual operation (move/close/assign/...),
+// not just the presence of the word "ticket", so it catches assignment commands too.
+const BOARD_OPERATION_PATTERN =
+  /\b(move|close|open|create|update|delete|mark)\b.{0,60}\b(ticket|card|to (done|today|backlog|in progress|blocked))\b|\bclose (the )?(modal|card|ticket|view|it)\b|\bassign\b.{0,40}\bto\b|\bwhat (cards?|tickets?)\b.{0,20}\bblock/i;
+
+// Categories whose presence signals a genuine research/strategy/evidence question -- #5's
+// "required" tier. Deliberately includes full_business_synthesis alongside the more obviously
+// document-flavored categories: #5's own "Should we target agencies or accountants?" example
+// only matches full_business_synthesis (no literal "customer"/"document" wording), and it's
+// listed as Required, not Optional.
+const REQUIRED_EVIDENCE_CATEGORIES = new Set<ContextCategory>([
+  "documents",
+  "customer_research",
+  "previous_decisions",
+  "full_business_synthesis",
+]);
 
 // Deliberately conservative in one direction only, same principle as retrievalGate.ts before
 // it: false positives (classifying a category as needed when it turns out not to matter) are
@@ -68,7 +101,7 @@ const CATEGORY_RULES: CategoryRule[] = [
   { category: "previous_decisions", pattern: /\b(decide[ds]?|decision|why did we|agreed to)\b/i },
   {
     category: "customer_research",
-    pattern: /\b(customer|user)s?\b.{0,30}\b(said|told|feedback|interview|research|want|need)|\b(target (customer|segment|market)|which (customers?|segment))\b/i,
+    pattern: /\b(customer|user)s?\b.{0,30}\b(sa(id|ys?|ying)|told|feedback|interview(s|ed)?|research|wants?|needs?)|\b(target (customer|segment|market)|which (customers?|segment))\b/i,
   },
   {
     category: "full_business_synthesis",
@@ -87,16 +120,12 @@ export function classifyContextNeeds(message: string): ContextClassification {
     }
   }
 
-  // needsDocumentRetrieval is intentionally *not* "only when the documents/customer_research
-  // category matched" -- that would be exactly the narrow-positive-match design this file's
-  // header warns against (it would, for example, miss #13's own "Should we target agencies or
-  // accountants?" example, which reads as full_business_synthesis, not customer_research, but
-  // clearly still benefits from retrieval). Instead: attempt retrieval for anything that isn't
-  // long-enough-to-be-real AND clearly reads as *only* a board/ticket operation with no other
-  // signal present -- i.e. the same permissive exclusion lib/rag/retrievalGate.ts used, now
-  // expressed through the fuller category taxonomy instead of its own separate pattern list.
-  const isPureBoardCommand = categories.has("board_ticket") && categories.size === 1;
-  const needsDocumentRetrieval = trimmed.length >= 12 && !isPureBoardCommand;
+  const documentRetrieval: DocumentRetrievalTier =
+    trimmed.length < 12 || BOARD_OPERATION_PATTERN.test(trimmed)
+      ? "skip"
+      : [...categories].some((category) => REQUIRED_EVIDENCE_CATEGORIES.has(category))
+        ? "required"
+        : "optional";
 
-  return { categories, needsDocumentRetrieval };
+  return { categories, documentRetrieval };
 }

@@ -16,3 +16,10 @@ export const EMBEDDING_DIMENSIONS = 1536;
 // because *something* is always closest.
 export const DEFAULT_MATCH_COUNT = 8;
 export const DEFAULT_MIN_SIMILARITY = 0.5;
+
+// P1 #5 (docs/founderally-rag-requested-changes.md "Improve Retrieval Gating"): the higher bar
+// applied when lib/agent/contextClassifier.ts's documentRetrieval tier is "optional" rather
+// than "required" -- the question doesn't clearly signal it needs company evidence, so
+// retrieval still runs (cheap), but only a strong match is worth injecting into the prompt;
+// a marginal one is noise for a question that's really about board/sprint state instead.
+export const OPTIONAL_TIER_MIN_SIMILARITY = 0.65;

@@ -39,6 +39,21 @@ The current RAG foundation is strong enough to build on. The goal now is **not t
     Not yet done: surfacing this in an actual admin/AI Ops UI -- there's no admin documents
     view today (only Cost Ops and LTD), so that's new UI work, tracked separately, not bundled
     into this schema/backend change._
+  - _Follow-up review finding, fixed: `embeddedCount` (and therefore `embedding_status`) was
+    computed from how many chunks Gemini returned an embedding *for*, without checking each
+    subsequent Postgres UPDATE's own `{ error }` -- so a DB write failure after a successful
+    Gemini call was invisible, and a document could read `ready`/fully indexed while some
+    chunks were never actually persisted with an embedding. `documentIngestion.ts` now inspects
+    every persistence result and only counts genuinely-persisted chunks; `embedding_error` on a
+    partial run reflects the true failed-to-persist count. Also stopped stamping
+    `embedding_indexed_at`/`embedding_error` on an empty document (0 chunks) -- there's nothing
+    to index, so `ready` is vacuously correct, but a timestamp would misrepresent it as a real
+    indexing run. Now covered by tests: pulled the counting/status/error-message logic out into
+    three pure functions (`countPersistedEmbeddings`, `resolveEmbeddingStatus`,
+    `describeEmbeddingError`) so the actual bug -- not inspecting each Postgres result's own
+    `{ error }` -- reproduces in `tests/document-embedding-status.test.ts` (10 cases, including
+    the review's exact "10 generated, 2 fail to persist" scenario) without needing to mock
+    Supabase-JS._
 
 Current behaviour can mark a document as `ready` even if embedding fails.
 
@@ -63,10 +78,10 @@ embeddingStatus:
 
 Alternative naming is acceptable, but document parsing/chunking and semantic indexing must be independently observable.
 
-- [ ] Store the timestamp of the last successful embedding/indexing run.
-- [ ] Store the last embedding/indexing error where useful.
+- [x] Store the timestamp of the last successful embedding/indexing run.
+- [x] Store the last embedding/indexing error where useful.
 - [ ] Surface failed or partial indexing in admin/AI Ops.
-- [ ] Do not tell the user a document is fully searchable when embedding failed.
+- [x] Do not tell the user a document is fully searchable when embedding failed.
 
 ### Acceptance criteria
 
@@ -157,7 +172,23 @@ The application needs to know which happened.
 
 # P1 — RAG Telemetry
 
-- [ ] **4. Add RAG telemetry to AI Ops**
+- [x] **4. Add RAG telemetry to AI Ops**
+  - _Implemented: `lib/rag/retrieval.ts` now measures `embeddingLatencyMs`/`dbLatencyMs`
+    separately; new `lib/rag/ragTelemetry.ts` (`logRagRetrieval`) records every attempt --
+    query (truncated, never chunk content), source (text/live), status, chunk count, top
+    similarity, both latencies, and document ids returned -- into the existing
+    `ai_operation_logs` table (no new table needed). Both the text path
+    (`companyKnowledgeContext.ts`) and Live path (`app/api/rag/search/route.ts`) now go through
+    this one shared logger instead of each having its own inline (thinner) log call. Metrics:
+    `summarizeRagTelemetry` (pure, unit-tested -- 5 cases including the empty/divide-by-zero
+    case) computes success/no-match/retrieval-error/embedding-failure rates, avg latency, and
+    avg chunk-count/similarity *on successful attempts only* (a failed attempt's 0 chunks
+    shouldn't dilute that number). New `/api/admin/rag-telemetry` route + "RAG Telemetry" admin
+    tab (`AdminRagTelemetryDashboard.tsx`) surface it. "Attempts per conversation" from the
+    original list isn't implemented as literally specified -- there's no conversation/session
+    grouping key in the current data model for text chat, so building a fake one felt worse
+    than being explicit: the dashboard reports raw attempt counts split by source (text vs
+    Live) instead._
 
 Track at minimum:
 
@@ -194,7 +225,19 @@ Add metrics for:
 
 # P1 — Improve Retrieval Gating
 
-- [ ] **5. Refine `needsDocumentRetrieval` behaviour**
+- [x] **5. Refine `needsDocumentRetrieval` behaviour**
+  - _Implemented: `documentRetrieval: "skip" | "optional" | "required"` replaces the old
+    boolean in `lib/agent/contextClassifier.ts`. `skip` never searches (and needed a new,
+    separate `BOARD_OPERATION_PATTERN` -- the general category taxonomy alone missed "Assign
+    this to Priya," this doc's own Skip example, since it reads as `team_member` not
+    `board_ticket` with no literal "ticket" wording). `optional` still searches -- cheap,
+    doesn't skip it outright per "do not make the classifier aggressively restrictive" -- but
+    requires a higher similarity bar (`OPTIONAL_TIER_MIN_SIMILARITY`, 0.65 vs the normal 0.5)
+    to actually surface evidence, applied on both text (`companyKnowledgeContext.ts`) and Live
+    (`app/api/rag/search/route.ts`, classifying the model's own tool-call query -- Live's
+    decision to search stays the model's, only the bar for what counts as relevant changes).
+    `required` uses the normal bar. All three of this item's own example sets (Skip/Optional/
+    Required) are asserted verbatim in `tests/context-classifier.test.ts`._
 
 The current classifier is intentionally permissive and effectively attempts retrieval for most meaningful messages that are not pure board operations.
 

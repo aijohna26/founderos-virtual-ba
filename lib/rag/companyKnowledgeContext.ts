@@ -2,7 +2,8 @@ import "server-only";
 
 import { searchDocumentChunks, type RetrievalStatus } from "@/lib/rag/retrieval";
 import { classifyContextNeeds } from "@/lib/agent/contextClassifier";
-import { logAIOperationServer } from "@/lib/agent/aiOperationsLogServer";
+import { logRagRetrieval } from "@/lib/rag/ragTelemetry";
+import { DEFAULT_MIN_SIMILARITY, OPTIONAL_TIER_MIN_SIMILARITY } from "@/lib/config/ragConfig";
 
 export interface CompanyKnowledgeSource {
   documentId: string;
@@ -56,28 +57,29 @@ export async function retrieveCompanyKnowledgeContext(params: {
   ventureId: string;
   query: string;
 }): Promise<CompanyKnowledgeContext> {
-  if (!classifyContextNeeds(params.query).needsDocumentRetrieval) {
+  const tier = classifyContextNeeds(params.query).documentRetrieval;
+  if (tier === "skip") {
     return { attempted: false, evidenceStatus: "no_match", promptText: NOT_ATTEMPTED_TEXT, sources: [] };
   }
+  // "optional" still searches -- just requires a stronger match to actually surface it (see
+  // OPTIONAL_TIER_MIN_SIMILARITY's own comment).
+  const minSimilarity = tier === "optional" ? OPTIONAL_TIER_MIN_SIMILARITY : DEFAULT_MIN_SIMILARITY;
 
   const startedAt = Date.now();
-  const result = await searchDocumentChunks({ userId: params.userId, ventureId: params.ventureId, query: params.query });
+  const result = await searchDocumentChunks({ userId: params.userId, ventureId: params.ventureId, query: params.query, minSimilarity });
   const latencyMs = Date.now() - startedAt;
 
-  // P0 #3: send retrieval health to AI Ops regardless of outcome -- success and no_match are
-  // both "the system worked," just with a different result, and are worth the same visibility
-  // as an actual failure for future rate calculations (P1 #4's telemetry work builds on this).
-  void logAIOperationServer({
+  // P0 #3 + P1 #4: send full retrieval health/telemetry to AI Ops regardless of outcome --
+  // success and no_match are both "the system worked," just with a different result, and are
+  // worth the same visibility as an actual failure for the rate/latency metrics in
+  // getRagTelemetrySummary.
+  void logRagRetrieval({
     userId: params.userId,
     ventureId: params.ventureId,
-    ceremony: "ad_hoc_decision",
-    geminiModel: "gemini-embedding-2",
-    toolRequested: "rag_retrieval",
-    toolArguments: { queryLength: params.query.length },
-    toolResult: { status: result.status, chunkCount: result.chunks.length, error: result.error },
-    reasoningCategory: "de_risking",
-    latencyMs,
-    success: result.status === "success" || result.status === "no_match",
+    query: params.query,
+    source: "text",
+    result,
+    totalLatencyMs: latencyMs,
   });
 
   const evidenceStatus = toEvidenceStatus(result.status);

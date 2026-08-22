@@ -34,6 +34,10 @@ export interface RetrievalResult {
   /** Present on embedding_unavailable/database_unavailable/retrieval_error. Diagnostic only --
    * callers must never surface this string directly to a founder (see companyKnowledgeContext.ts). */
   error?: string;
+  /** P1 #4 telemetry: how long embedding the query itself took, separate from the DB search. */
+  embeddingLatencyMs: number;
+  /** P1 #4 telemetry: how long the match_document_chunks RPC call took. */
+  dbLatencyMs: number;
 }
 
 /**
@@ -57,13 +61,22 @@ export async function searchDocumentChunks(params: {
   minSimilarity?: number;
 }): Promise<RetrievalResult> {
   const admin = getSupabaseAdmin();
-  if (!admin) return { status: "database_unavailable", chunks: [], error: "Supabase is not configured." };
+  if (!admin) return { status: "database_unavailable", chunks: [], error: "Supabase is not configured.", embeddingLatencyMs: 0, dbLatencyMs: 0 };
 
+  const embeddingStartedAt = Date.now();
   const queryEmbedding = await embedQueryText(params.query);
+  const embeddingLatencyMs = Date.now() - embeddingStartedAt;
   if (!queryEmbedding) {
-    return { status: "embedding_unavailable", chunks: [], error: "Query embedding failed or GEMINI_API_KEY is not configured." };
+    return {
+      status: "embedding_unavailable",
+      chunks: [],
+      error: "Query embedding failed or GEMINI_API_KEY is not configured.",
+      embeddingLatencyMs,
+      dbLatencyMs: 0,
+    };
   }
 
+  const dbStartedAt = Date.now();
   const { data, error } = await admin.rpc("match_document_chunks", {
     p_venture_id: params.ventureId,
     p_user_id: params.userId,
@@ -71,10 +84,11 @@ export async function searchDocumentChunks(params: {
     p_match_count: params.matchCount ?? DEFAULT_MATCH_COUNT,
     p_min_similarity: params.minSimilarity ?? DEFAULT_MIN_SIMILARITY,
   });
+  const dbLatencyMs = Date.now() - dbStartedAt;
 
   if (error) {
     console.error("Document chunk retrieval failed:", error);
-    return { status: "retrieval_error", chunks: [], error: error.message };
+    return { status: "retrieval_error", chunks: [], error: error.message, embeddingLatencyMs, dbLatencyMs };
   }
 
   const chunks: RetrievedChunk[] = (data ?? []).map((row: Record<string, unknown>) => ({
@@ -87,5 +101,5 @@ export async function searchDocumentChunks(params: {
     similarity: Number(row.similarity),
   }));
 
-  return { status: chunks.length > 0 ? "success" : "no_match", chunks };
+  return { status: chunks.length > 0 ? "success" : "no_match", chunks, embeddingLatencyMs, dbLatencyMs };
 }
