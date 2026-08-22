@@ -1,7 +1,8 @@
 import { auth } from "@clerk/nextjs/server";
+import { after } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import { ingestDocument } from "@/lib/rag/documentIngestion";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { resolveVentureAccess, type VentureAccess } from "@/lib/venture/access";
 
 type Resource = "ventures" | "commitments" | "learnings" | "memories" | "documents" | "operations";
 
@@ -56,39 +57,6 @@ function cleanRecord(resource: Resource, value: unknown): Record<string, unknown
 async function authenticatedUserId() {
   const { isAuthenticated, userId } = await auth();
   return isAuthenticated ? userId : null;
-}
-
-interface VentureAccess {
-  ownerUserId: string;
-  role: "owner" | "cofounder" | "member" | "advisor" | "external";
-  canEditBoard: boolean;
-}
-
-async function resolveVentureAccess(
-  supabase: SupabaseClient,
-  userId: string,
-  ventureId: string,
-): Promise<VentureAccess | null> {
-  const { data: owned } = await supabase
-    .from("founder_ventures")
-    .select("user_id")
-    .eq("user_id", userId)
-    .eq("venture_id", ventureId)
-    .maybeSingle();
-  if (owned) return { ownerUserId: userId, role: "owner", canEditBoard: true };
-  const { data: membership } = await supabase
-    .from("venture_memberships")
-    .select("owner_user_id,role,can_edit_board")
-    .eq("user_id", userId)
-    .eq("venture_id", ventureId)
-    .eq("status", "active")
-    .maybeSingle();
-  if (!membership) return null;
-  return {
-    ownerUserId: membership.owner_user_id,
-    role: membership.role,
-    canEditBoard: Boolean(membership.can_edit_board),
-  };
 }
 
 export async function GET(request: Request) {
@@ -221,19 +189,23 @@ export async function POST(request: Request) {
     }, { onConflict: "owner_user_id,venture_id,user_id" });
   }
 
-  // P1 #6: (re-)chunk this document for retrieval right after every save, so a document's
-  // chunks are never more stale than its last saved content. Awaited (not fire-and-forget)
-  // so ingestion_status is settled by the time this responds, but never lets an ingestion
-  // failure turn into a save failure -- the document itself is already committed above
-  // regardless of what happens here.
+  // P1 #6/#7: (re-)chunk and embed this document for retrieval. Scheduled via after() rather
+  // than awaited -- embedding is a Gemini API call, and letting it block this response would
+  // make document saves noticeably slower as documents/embedding volume grow (review finding:
+  // "design toward" async now, before that's actually a problem, rather than bolting on a
+  // queue later under pressure). The document row itself is already committed above by the
+  // time this runs; ingestion_status starts 'pending' (set by the DB trigger in
+  // 20260822090000_document_ingestion.sql) and callers can poll/observe it settling to
+  // ready/failed rather than needing this request to wait for it.
   if (body.resource === "documents") {
-    await ingestDocument({
+    const documentSnapshot = {
       id: String(data.id),
       userId: String(data.user_id),
       ventureId: String(data.venture_id),
       title: String(data.title),
       content: String(data.content),
-    });
+    };
+    after(() => ingestDocument(documentSnapshot));
   }
 
   return Response.json({ record: data });

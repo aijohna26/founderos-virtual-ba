@@ -29,7 +29,6 @@ import { VoiceEngine, VoiceState } from "@/lib/voice/voiceEngine";
 import { GeminiLiveService, type LiveSessionState } from "@/lib/agent/geminiLiveService";
 import { MemoryService, MemoryFact } from "@/lib/db/memoryService";
 import { BAAgentService, type ToolExecutionResult } from "@/lib/agent/baAgentService";
-import { DocumentStore } from "@/lib/store/documentStore";
 import {
   ADVISOR_PERSONAS,
   GEMINI_VOICES,
@@ -471,7 +470,6 @@ export function AiAnalystPanel({
 
     try {
       const activeMemories = MemoryService.getMemories(venture.id);
-      const activeDocuments = DocumentStore.getDocuments(venture.id);
 
       const res = await fetch("/api/ai-analyst", {
         method: "POST",
@@ -479,6 +477,7 @@ export function AiAnalystPanel({
         body: JSON.stringify({
           message: userText,
           venture: {
+            id: venture.id,
             name: venture.name,
             tagline: venture.tagline,
             stage: venture.stage,
@@ -495,7 +494,6 @@ export function AiAnalystPanel({
             standupSessions: venture.standupSessions,
           },
           memories: activeMemories,
-          documents: activeDocuments,
           history: updatedHistory.slice(-6),
           focusedTicket: focusedTicketRecord ? {
             id: focusedTicketRecord.card.id,

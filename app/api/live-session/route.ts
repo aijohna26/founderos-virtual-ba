@@ -85,7 +85,6 @@ export async function POST(req: NextRequest) {
       commitments: Array.isArray(body.commitments) ? body.commitments : [],
       learnings: Array.isArray(body.learnings) ? body.learnings : [],
       memories: Array.isArray(body.memories) ? body.memories : [],
-      documents: Array.isArray(body.documents) ? body.documents : [],
       voiceName: requestedVoice?.name || advisor.voiceName,
       advisor: {
         name: advisor.name,

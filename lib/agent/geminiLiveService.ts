@@ -6,7 +6,6 @@ import { BAAgentService, ToolExecutionResult } from "@/lib/agent/baAgentService"
 import { AIOperationsLogger } from "@/lib/agent/aiOperationsLog";
 import { CommitmentStore } from "@/lib/store/commitmentStore";
 import { MemoryService } from "@/lib/db/memoryService";
-import { DocumentStore } from "@/lib/store/documentStore";
 import { buildGeminiLiveConfig } from "@/lib/agent/geminiLiveConfig";
 import { GEMINI_CONFIG } from "@/lib/config/geminiConfig";
 import {
@@ -139,7 +138,6 @@ export class GeminiLiveService {
       await Promise.all([
         CommitmentStore.hydrate(this.venture.id),
         MemoryService.hydrate(this.venture.id),
-        DocumentStore.hydrate(this.venture.id),
         AIOperationsLogger.hydrate(this.venture.id),
       ]);
       const context = {
@@ -147,7 +145,6 @@ export class GeminiLiveService {
         commitments: CommitmentStore.getOutstandingCommitments(this.venture.id),
         learnings: CommitmentStore.getLearnings(this.venture.id),
         memories: MemoryService.getMemories(this.venture.id),
-        documents: DocumentStore.getDocuments(this.venture.id),
         voiceName: this.advisor.voiceName,
         advisor: {
           name: this.advisor.name,
@@ -165,7 +162,6 @@ export class GeminiLiveService {
           commitments: context.commitments,
           learnings: context.learnings,
           memories: context.memories,
-          documents: context.documents,
           advisorId: this.advisor.id,
           voiceName: this.advisor.voiceName,
         }),
@@ -310,7 +306,7 @@ export class GeminiLiveService {
     this.scriptProcessor.connect(this.captureAudioContext.destination);
   }
 
-  private handleServerMessage(message: LiveServerMessage): void {
+  private async handleServerMessage(message: LiveServerMessage): Promise<void> {
     const content = message.serverContent;
     if (content?.interrupted) {
       this.stopPlayback();
@@ -364,10 +360,36 @@ export class GeminiLiveService {
       // founder themselves is gone.
       this.markSessionActivity();
       this.callbacks.onStateChange("using_tool");
-      const functionResponses = message.toolCall.functionCalls.map((call) => {
+      const functionResponses = await Promise.all(message.toolCall.functionCalls.map(async (call) => {
         const startedAt = performance.now();
         const args = (call.args || {}) as Record<string, unknown>;
         const toolName = call.name || "unknown_tool";
+
+        // Not a board tool at all -- server-side retrieval BAAgentService (client-only, no DB
+        // access) can't execute, so it's special-cased here rather than going through the
+        // ticket-mutation/executeTool path below. See app/api/rag/search/route.ts.
+        if (toolName === "search_company_knowledge") {
+          const query = typeof args.query === "string" ? args.query : "";
+          const result = await this.searchCompanyKnowledge(query);
+          this.callbacks.onToolExecuted(toolName, result);
+          AIOperationsLogger.logOperation({
+            ventureId: this.venture.id,
+            ceremony: "daily_standup",
+            geminiModel: GEMINI_CONFIG.LIVE_MODEL,
+            toolRequested: `live_roundtrip:${toolName}`,
+            toolArguments: { query },
+            toolResult: { success: result.success, sourceCount: result.data?.sources?.length ?? 0 },
+            reasoningCategory: "de_risking",
+            latencyMs: Math.round(performance.now() - startedAt),
+            success: result.success,
+          });
+          return {
+            id: call.id,
+            name: call.name,
+            response: { output: { success: true, sources: result.data?.sources ?? [] } },
+          };
+        }
+
         const isTicketMutation = isTicketMutationAction({ type: toolName });
 
         // Remember whichever ticket this call explicitly names (any tool, not just
@@ -477,12 +499,48 @@ export class GeminiLiveService {
             ? { output: { success: true, message: result.message, data: result.data || {} } }
             : { error: { success: false, message: result.message } },
         };
-      });
+      }));
 
-      // Synchronous Live tools pause model generation until this response is
-      // returned, so the selected advisor continues in this exact conversation with the
-      // authoritative success/failure result.
+      // Live tools pause model generation until this response is returned, so the selected
+      // advisor continues in this exact conversation with the authoritative result --
+      // including search_company_knowledge above, which is awaited the same way even though
+      // it's a network call rather than a synchronous board mutation.
       this.session?.sendToolResponse({ functionResponses });
+    }
+  }
+
+  /**
+   * P1 #7/#8: fetches this venture's relevant document chunks for a Live tool call. Runs
+   * client-side (unlike the text chat path, which calls searchDocumentChunks directly
+   * server-side) because Live's tool calls are executed by the browser, not by a route
+   * handler -- see app/api/rag/search/route.ts for the actual venture-scoped retrieval.
+   * Never throws: a failed search still returns a tool result so the model can tell the
+   * founder it couldn't find anything, rather than leaving the tool call hanging.
+   */
+  private async searchCompanyKnowledge(query: string): Promise<ToolExecutionResult> {
+    if (!query.trim()) {
+      return { toolName: "search_company_knowledge", success: true, message: "No search query given.", data: { sources: [] } };
+    }
+    try {
+      const res = await fetch("/api/rag/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ventureId: this.venture.id, query }),
+      });
+      if (!res.ok) {
+        return { toolName: "search_company_knowledge", success: false, message: "Company knowledge search failed.", data: { sources: [] } };
+      }
+      const payload = (await res.json()) as { sources?: Array<{ title: string; section: string | null; content: string; similarity: number }> };
+      const sources = Array.isArray(payload.sources) ? payload.sources : [];
+      return {
+        toolName: "search_company_knowledge",
+        success: true,
+        message: sources.length > 0 ? `Found ${sources.length} relevant document excerpt(s).` : "No relevant company documents found for this question.",
+        data: { sources },
+      };
+    } catch (err) {
+      console.warn("search_company_knowledge failed:", err);
+      return { toolName: "search_company_knowledge", success: false, message: "Company knowledge search failed.", data: { sources: [] } };
     }
   }
 

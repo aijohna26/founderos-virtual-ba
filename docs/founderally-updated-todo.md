@@ -163,13 +163,39 @@ This replaces the older TODO priorities. The LTD concurrency architecture is now
     `pgvector/pgvector:pg16` (see `tests/db/testDb.ts`) since this migration needs the
     extension. No ANN index yet (exact scan is fine, and more accurate, at current data scale
     -- comment in the migration says when to add one).
+  - _Review follow-ups applied: embedding failure no longer silently reads as fully "ready"
+    (new `embedding_status` column, tracked separately from `ingestion_status` -- see
+    `20260822110000_document_embedding_status.sql`); ingestion is now scheduled via Next's
+    `after()` instead of awaited inline, so embedding latency never delays a document save
+    (`app/api/persistence/route.ts`); chunk-ID stability under future citation persistence is
+    flagged with a deferral comment in `documentIngestion.ts`, not fixed (nothing depends on
+    it yet)._
 
-- [ ] **8. Build semantic company-knowledge retrieval**
+- [x] **8. Build semantic company-knowledge retrieval**
   - Retrieve only relevant chunks for a question.
   - Do not inject every company document into every prompt.
   - Rank results.
   - Apply sensible relevance thresholds.
   - Keep token usage controlled.
+  - _Implemented per the reviewed roadmap: the old "dump every saved document into every
+    prompt" pattern is gone from both surfaces. **Text** (`app/api/ai-analyst/route.ts`):
+    `lib/rag/companyKnowledgeContext.ts` gates on a minimal heuristic
+    (`lib/rag/retrievalGate.ts` -- explicitly *not* the real classifier, P1 #11 replaces it
+    outright once built), retrieves only matching chunks, injects those in place of the old
+    document dump, and returns structured `sources` in the response. **Live**
+    (`lib/agent/geminiLiveConfig.ts`/`geminiLiveService.ts`): documents are no longer preloaded
+    into the connect-time system prompt at all -- added `search_company_knowledge` as an
+    eighth agent tool the model calls on its own judgment (consistent with how it already
+    decides when to call `get_ticket` etc.), executed client-side via new
+    `app/api/rag/search/route.ts` (venture-membership checked, reusing the access logic
+    extracted to `lib/venture/access.ts`). This one mechanism naturally satisfies "avoid
+    unnecessary RAG" for Live -- the model just doesn't call the tool for board commands.
+    Client payload cleanup: `documents` is no longer sent to either route;
+    `AiAnalystPanel.tsx` now sends `venture.id` (previously missing entirely, which had also
+    left `recordTextChatCost`'s `ventureId` silently null). New tests:
+    `tests/retrieval-gate.test.ts` (board commands / short messages excluded, real questions
+    pass); `tests/document-retrieval.test.ts` from #7 already covers ranking, threshold
+    exclusion, and cross-venture isolation with multiple documents.
 
 - [ ] **9. Add source provenance**
   - Sarah should internally know which evidence supports an answer:
@@ -182,11 +208,22 @@ This replaces the older TODO priorities. The LTD concurrency architecture is now
     - learning
     - customer research
   - Never invent sources.
+  - _Partial: the "document" evidence type has real structured provenance now (title, section,
+    similarity -- returned as `sources` alongside every text reply and passed to Live's
+    `search_company_knowledge` tool result), and the system prompt on both surfaces
+    explicitly requires citing it and never inventing contents beyond what was retrieved. The
+    other seven evidence types (ticket/sprint/commitment/decision/assumption/learning/customer
+    research) have no equivalent structured-citation trail yet -- still genuinely open._
 
-- [ ] **10. Make Sarah genuinely company-aware**
+- [x] **10. Make Sarah genuinely company-aware**
   - Relevant company knowledge should automatically influence answers.
   - Founder should not repeatedly need to say “look at my documents.”
   - Sarah should distinguish known company facts from her own recommendation.
+  - _A direct consequence of #8, not separate work: retrieval is now automatic (gated on the
+    question itself, not a manual trigger) on both text and Live, and both system prompts
+    require separating retrieved evidence from inference. Marked done on that basis, but it's
+    only as good as the minimal gate/similarity threshold behind it -- P1 #11's real
+    classifier should meaningfully improve recall over time, not just replace scaffolding._
 
 ---
 
